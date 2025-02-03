@@ -45,10 +45,15 @@ Before you begin, ensure you have the following installed on your machine:
 
 **Run the Flask application:**
 
-    ```sh
-    python api.py
-    ```
+In your terminal run 
 
-    The application should now be running on `http://127.0.0.1:5000`. Test out the available routes under "Default namespace".
+```sh
+python api.py
+```
+    
+The application should now be running on `http://127.0.0.1:5000`. 
+
+**Testing the application**
+Test out the available routes/sections under "Default namespace". 
 
 
