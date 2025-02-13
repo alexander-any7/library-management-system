@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, Response, request
 from flask_restx import Api, Resource
 
 app = Flask(__name__)
@@ -17,6 +17,11 @@ class HelloWorld(Resource):
 class Books(Resource):
     def get(self):
         return random_data
+
+    def post(self):     
+        data = request.json
+        print(data)   
+        return Response(status=201)
 
 
 @api.route("/books/<int:id>")

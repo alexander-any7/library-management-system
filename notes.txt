@@ -1,0 +1,52 @@
+Book
+    id
+    title
+    author - fk?
+    isbn,
+    category - fk?
+    originalQuantity # represents the quantity owned including those borrowed 
+    availableQuantity # is this a duplication since I can query BookCopy
+
+BookCopy
+    id
+    bookId fk(Book)
+    isBorrowed
+    condition (TEXT or ENUM)
+
+User
+    id
+    username
+    password
+    is_active
+
+
+Admin # For actions or data specific to an admin. An admin can also borrow books just like users
+    id
+    user - fk(User)
+    
+
+Borrow
+    id
+    user - fk(User)
+    bookCopy- fk(BookCopy)
+    date
+    due_date
+
+
+Return
+    id
+    borrow - fk(Borrow) 
+    returnDate
+    comments
+    received_by fk(Admin)
+
+
+Fines
+    id
+    user - fk(User)
+    reason - (overdue or damage)
+    bookCopy - fk(BookCopy) for damage
+    amount
+    paid
+    datePaid
+    collectedBy - fk(Admin)
