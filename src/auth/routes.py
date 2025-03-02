@@ -32,13 +32,6 @@ login_input = auth_namespace.model(
     },
 )
 
-refresh_input = auth_namespace.model(
-    "RefreshInput",
-    {
-        "refresh_token": fields.String(required=True, description="Refresh Token"),
-    },
-)
-
 
 @auth_namespace.route("/register", methods=["POST"])
 @auth_namespace.expect(register_input)

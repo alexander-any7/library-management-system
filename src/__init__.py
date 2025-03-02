@@ -1,7 +1,7 @@
 from flask import Flask
 from flask_jwt_extended import JWTManager
 from flask_restx import Api
-from sqlalchemy import select, text
+from sqlalchemy import select, text  # noqa
 
 from sql import CREATE_POSTGRES, CREATE_SQLITE
 from src import models as md
@@ -29,11 +29,11 @@ def create_app(db="sqlite"):
     if db == "sqlite":
         statements = CREATE_SQLITE.split(";")
     elif db == "postgres":
-        statements = CREATE_POSTGRES.split(";")
+        statements = CREATE_POSTGRES.split(";")  # noqa
 
-    for stmt in statements:
-        session.execute(text(stmt))
-    session.commit()
+    # for stmt in statements:
+    #     session.execute(text(stmt))
+    # session.commit()
 
     @jwt.user_identity_loader
     def user_identity_lookup(user):
