@@ -14,8 +14,8 @@ class ListUsersSchema(BaseModel):
     email: str
     first_name: str
     last_name: str
-    is_active: bool = True
-    role: str = "student"
+    is_active: bool
+    role: str
 
 
 class UserDetailSchema(BaseModel):
@@ -23,8 +23,8 @@ class UserDetailSchema(BaseModel):
     email: str
     first_name: str
     last_name: str
-    is_active: bool = True
-    role: str = "student"
+    is_active: bool
+    role: str
     # categories_added: List["Category"] = []
     # books_added: List["Book"] = []
 
@@ -53,6 +53,7 @@ class ListBookSchema(BaseModel):
     book_category: str
     current_quantity: int
     date_added: datetime
+    location: str
     is_available: bool
 
     @field_validator("book_category", mode="before")

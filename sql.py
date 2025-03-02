@@ -5,7 +5,7 @@ CREATE_SQLITE = """CREATE TABLE IF NOT EXISTS "user_account" (
 	last_name TEXT NOT NULL CHECK (LENGTH(last_name) <= 20), 
 	password TEXT NOT NULL, 
 	is_active BOOLEAN DEFAULT 1 NOT NULL, 
-	role TEXT DEFAULT 'student' NOT NULL CHECK (role IN ('student', 'staff', 'external') AND LENGTH(role) <= 20)
+	role TEXT DEFAULT 'student' NOT NULL CHECK (role IN ('student', 'admin', 'external') AND LENGTH(role) <= 20)
 );
 
 CREATE TABLE IF NOT EXISTS "category" (
@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS "book" (
 	current_quantity INTEGER DEFAULT '1' NOT NULL, 
 	date_added DATETIME NOT NULL, 
 	added_by_id INTEGER NOT NULL, 
-	is_available BOOLEAN DEFAULT 1 NOT NULL, 
+	is_available BOOLEAN DEFAULT 1 NOT NULL,
+    location TEXT CHECK (LENGTH(location) <= 20) NOT NULL DEFAULT 'shelf', 
 	FOREIGN KEY(category_id) REFERENCES category (id), 
 	FOREIGN KEY(added_by_id) REFERENCES user_account (id)
 );
@@ -69,7 +70,7 @@ CREATE_POSTGRES = """CREATE TABLE IF NOT EXISTS "user_account" (
 	last_name VARCHAR(20) NOT NULL, 
 	password VARCHAR NOT NULL, 
 	is_active BOOLEAN DEFAULT '1' NOT NULL, 
-	role VARCHAR(20) DEFAULT 'student' NOT NULL CHECK (role IN ('student', 'staff', 'external')),
+	role VARCHAR(20) DEFAULT 'student' NOT NULL CHECK (role IN ('student', 'admin', 'external')),
 	UNIQUE (email)
 );
 
@@ -92,6 +93,7 @@ CREATE TABLE IF NOT EXISTS "book" (
 	date_added TIMESTAMP NOT NULL, 
 	added_by_id INTEGER NOT NULL, 
 	is_available BOOLEAN DEFAULT '1' NOT NULL, 
+    location VARCHAR(20) DEFAULT 'shelf' NOT NULL,
 	UNIQUE (isbn), 
 	FOREIGN KEY(category_id) REFERENCES category (id), 
 	FOREIGN KEY(added_by_id) REFERENCES user_account (id)

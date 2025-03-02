@@ -9,7 +9,7 @@ from sqlalchemy.sql import delete, insert, update
 
 import src.models as md
 import src.p_models as pmd
-from src.auth.oauth import staff_required
+from src.auth.oauth import admin_required
 from src.utils import session, sql_compile
 
 book_namespace = Namespace("Books", description="Book operations", path="/")
@@ -22,6 +22,7 @@ new_book_input = book_namespace.model(
         "category_id": fields.Integer(required=True, description="Category ID"),
         "isbn": fields.String(required=True, description="ISBN"),
         "quantity": fields.Integer(required=True, description="Quantity"),
+        "location": fields.String(description="Location"),
     },
 )
 
@@ -33,6 +34,7 @@ update_book_input = book_namespace.model(
         "category_id": fields.Integer(description="Category ID"),
         "isbn": fields.String(description="ISBN"),
         "quantity": fields.Integer(description="Quantity"),
+        "location": fields.String(description="Location"),
     },
 )
 
@@ -41,6 +43,22 @@ update_book_input = book_namespace.model(
 class Books(Resource):
     def get(self):
         stmt = select(md.Book, md.Category.name).join(md.Category)
+        title = request.args.get("title")
+        if title:
+            stmt = stmt.where(md.Book.title.ilike(f"%{title}%"))
+
+        author = request.args.get("author")
+        if author:
+            stmt = stmt.where(md.Book.author.ilike(f"%{author}%"))
+
+        isbn = request.args.get("isbn")
+        if isbn:
+            stmt = stmt.where(md.Book.isbn.ilike(f"%{isbn}%"))
+
+        category = request.args.get("category")
+        if category:
+            stmt = stmt.where(md.Category.name == category)
+
         res = session.scalars(stmt)
         books = res.all()
         books = [pmd.ListBookSchema.model_validate(book) for book in books]
@@ -48,7 +66,7 @@ class Books(Resource):
             {"books": [book.model_dump() for book in books], "queries": [sql_compile(stmt)]}
         )
 
-    @staff_required
+    @admin_required
     @book_namespace.expect(new_book_input)
     def post(self):
         data = request.json
@@ -80,11 +98,12 @@ class Books(Resource):
         try:
             session.add(book)
             session.commit()
+            return make_response(jsonify(book_id=book.id, queries=[query]), HTTPStatus.CREATED)
         except Exception as e:
             session.rollback()
-            return make_response(jsonify(error=str(e), queries=[query]), HTTPStatus.BAD_REQUEST)
-
-        return make_response(jsonify(book_id=book.id, queries=[query]), HTTPStatus.CREATED)
+            return make_response(
+                jsonify(error=str(e), queries=[query]), HTTPStatus.INTERNAL_SERVER_ERROR
+            )
 
 
 @book_namespace.route("/books/<int:id>")
@@ -97,7 +116,7 @@ class Book(Resource):
         book = pmd.BookDetailSchema.model_validate(book)
         return jsonify({"book": book.model_dump(), "queries": [sql_compile(stmt)]})
 
-    @staff_required
+    @admin_required
     @book_namespace.expect(update_book_input)
     def put(self, id):
         # Get the fields to update from the request
@@ -131,9 +150,11 @@ class Book(Resource):
             )
         except Exception as e:
             session.rollback()
-            return make_response(jsonify(error=str(e), queries=queries), HTTPStatus.BAD_REQUEST)
+            return make_response(
+                jsonify(error=str(e), queries=queries), HTTPStatus.INTERNAL_SERVER_ERROR
+            )
 
-    @staff_required
+    @admin_required
     def delete(self, id):
         book_exists_stmt = select(md.Book.id).where(md.Book.id == id)
         queries = [sql_compile(book_exists_stmt)]
@@ -169,4 +190,6 @@ class Book(Resource):
             )
         except Exception as e:
             session.rollback()
-            return make_response(jsonify(error=str(e), queries=queries), HTTPStatus.BAD_REQUEST)
+            return make_response(
+                jsonify(error=str(e), queries=queries), HTTPStatus.INTERNAL_SERVER_ERROR
+            )

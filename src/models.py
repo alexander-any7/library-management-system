@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, DateTime
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -82,6 +82,7 @@ class Book(Base):
     is_available: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, server_default="1"
     )
+    location: Mapped[str] = mapped_column(String(20))
 
     book_category: Mapped[Category] = relationship(back_populates="books")
     book_added_by: Mapped[UserAccount] = relationship(back_populates="books_added")
