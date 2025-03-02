@@ -1,5 +1,10 @@
-from flask import Response, jsonify, request
-from flask_jwt_extended import create_access_token, create_refresh_token
+from flask import Response, jsonify, make_response, request
+from flask_jwt_extended import (
+    create_access_token,
+    create_refresh_token,
+    current_user,
+    jwt_required,
+)
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy import select
 
@@ -27,6 +32,22 @@ login_input = auth_namespace.model(
     },
 )
 
+refresh_input = auth_namespace.model(
+    "RefreshInput",
+    {
+        "refresh_token": fields.String(required=True, description="Refresh Token"),
+    },
+)
+
+
+@auth_namespace.route("/register", methods=["POST"])
+@auth_namespace.expect(register_input)
+class Register(Resource):
+    def post(self):
+        data = request.json
+        print(data)
+        return Response(status=201)
+
 
 @auth_namespace.route("/login", methods=["POST"])
 @auth_namespace.expect(login_input)
@@ -40,18 +61,22 @@ class Login(Resource):
         ).where(md.UserAccount.email == email)
         user = session.execute(stmt).mappings().first()
         if not user or not check_password(password, user.password):
-            return jsonify(message="Wrong username or password", query=str(stmt)), 401
+            return make_response(
+                jsonify(message="Wrong username or password", query=str(stmt)), 401
+            )
 
         additional_claims = {"role": user.role}
         access_token = create_access_token(identity=user, additional_claims=additional_claims)
         refresh_token = create_refresh_token(identity=user, additional_claims=additional_claims)
-        return jsonify(access_token=access_token, refresh_token=refresh_token)
+        return jsonify(access_token=access_token, refresh_token=refresh_token, query=str(stmt))
 
 
-@auth_namespace.route("/register", methods=["POST"])
-@auth_namespace.expect(register_input)
-class Register(Resource):
+@auth_namespace.route("/refresh")
+class Refresh(Resource):
+    @jwt_required(refresh=True)
     def post(self):
-        data = request.json
-        print(data)
-        return Response(status=201)
+        """Create a new access token from a refresh token"""
+        access_token = create_access_token(
+            identity=current_user, additional_claims={"role": current_user.role}
+        )
+        return make_response(jsonify(access_token=access_token), 200)
