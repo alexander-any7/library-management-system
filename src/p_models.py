@@ -74,9 +74,9 @@ class ListBorrowSchema(BaseModel):
     id: int
     borrowed_book: str
     borrowed_by: str
-    borrow_date: str
+    borrow_date: datetime
     given_by: str
-    due_date: str
+    due_date: datetime
     is_returned: bool = False
     received_by: Optional[str]
 
@@ -103,18 +103,22 @@ class DetailBorrowSchema(ListBorrowSchema):
 
 class FineListSchema(BaseModel):
     id: int
-    borrow: int
+    borrow: str
     amount: float
     paid: bool = False
-    date_created: str
-    date_paid: Optional[str]
+    date_created: datetime
+    date_paid: Optional[datetime]
+
+    @field_validator("borrow", mode="before")
+    def convert_borrow_to_string(cls, value):
+        return str(value)
 
 
 class FineDetailSchema(FineListSchema):
-    payment_method: Optional[str]
+    payment_method: Optional[datetime]
     transaction_id: Optional[str]
     collected_by: Optional[str]
 
     @field_validator("collected_by", mode="before")
-    def convert_received_by_to_string(cls, value):
+    def convert_collected_by_to_string(cls, value):
         return str(value)

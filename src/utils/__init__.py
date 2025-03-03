@@ -1,11 +1,15 @@
 from datetime import datetime, timedelta
+from functools import wraps
 
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import dialect as PostgresDialect
 from sqlalchemy.dialects.sqlite import dialect as SqliteDialect
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import DQLDMLClauseElement
 from werkzeug.security import check_password_hash, generate_password_hash
+
+PAYMENT_METHODS = ["cash", "debit", "credit", "paypal", "stripe"]
 
 
 def hash_password(self, password):
@@ -44,3 +48,25 @@ def calculate_fine(**kwargs):
         return 0
     days = (datetime.now() - date).days
     return days * 100 if days > 0 else 0
+
+
+def atomic_transaction(func):
+    """
+    Decorator to wrap a function in an atomic transaction.
+    Uses the global `session` object.
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)  # Execute the function
+            session.commit()  # Commit the transaction if no errors
+            return result
+        except SQLAlchemyError as e:
+            session.rollback()  # Rollback on SQLAlchemy errors
+            raise e
+        except Exception as e:
+            session.rollback()  # Rollback on any other errors
+            raise e
+
+    return wrapper

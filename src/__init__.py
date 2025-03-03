@@ -7,6 +7,7 @@ from sql import CREATE_POSTGRES, CREATE_SQLITE
 from src import models as md
 from src.auth.routes import auth_namespace
 from src.books import book_namespace
+from src.borrows import borrow_namespace
 from src.utils import session
 
 
@@ -50,5 +51,6 @@ def create_app(db="sqlite"):
 
     api.add_namespace(book_namespace, path="")
     api.add_namespace(auth_namespace, path="")
+    api.add_namespace(borrow_namespace, path="")
 
     return app
