@@ -57,7 +57,7 @@ class ListBookSchema(BaseModel):
     is_available: bool
 
     @field_validator("book_category", mode="before")
-    def convert_category_to_string(cls, value):
+    def convert_book_category_to_string(cls, value):
         return str(value)
 
 
@@ -70,19 +70,31 @@ class BookDetailSchema(ListBookSchema):
         return str(value)
 
 
-class ListBorrowSchema(BaseModel):
+class MoreBookDetailSchema(BookDetailSchema):
+    borrows: list["ListBorrowSchema"]
+
+    @field_validator("borrows", mode="before")
+    def list_borrows(cls, value):
+        return [ListBorrowSchema.model_validate(borrow) for borrow in value]
+        # return [borrow.model_dump() for borrow in borrows]
+
+
+class MinimalBorrowSchema(BaseModel):
     id: int
     borrowed_book: str
-    borrowed_by: str
     borrow_date: datetime
-    given_by: str
-    due_date: datetime
     is_returned: bool = False
-    received_by: Optional[str]
 
     @field_validator("borrowed_book", mode="before")
-    def convert_category_to_string(cls, value):
+    def convert_borrowed_book_to_string(cls, value):
         return str(value)
+
+
+class ListBorrowSchema(MinimalBorrowSchema):
+    borrowed_by: str
+    given_by: str
+    due_date: datetime
+    received_by: Optional[str]
 
     @field_validator("borrowed_by", mode="before")
     def convert_borrowed_by_to_string(cls, value):

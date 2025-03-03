@@ -2,9 +2,10 @@ from datetime import datetime
 from http import HTTPStatus
 
 from flask import jsonify, make_response, request
-from flask_jwt_extended import current_user
+from flask_jwt_extended import current_user, jwt_required
 from flask_restx import Namespace, Resource, fields
 from sqlalchemy import delete, insert, select, update
+from sqlalchemy.orm import joinedload
 
 import src.models as md
 import src.p_models as pmd
@@ -102,11 +103,54 @@ class Books(Resource):
 @book_namespace.route("/books/<int:book_id>")
 @book_namespace.doc(params={"book_id": "Book ID"})
 class Book(Resource):
+    @jwt_required(optional=True)
     def get(self, book_id):
-        stmt = select(md.Book).where(md.Book.id == book_id).join(md.Category).join(md.UserAccount)
-        res = session.scalars(stmt)
-        book = res.first()
-        book = pmd.BookDetailSchema.model_validate(book)
+        schema = pmd.BookDetailSchema
+        # Base query to select a book by its ID and join with its category
+        stmt = (
+            # Select all columns from the Book table
+            select(md.Book)
+            # Join with the Category table using the book_category relationship
+            .join(md.Book.book_category)
+            # Filter the query to only include the book with the specified book_id
+            .where(md.Book.id == book_id)
+            # Use joinedload to eagerly load the book_category relationship
+            # and restrict the loaded fields to only id and name from the Category table
+            .options(joinedload(md.Book.book_category).load_only(md.Category.id, md.Category.name))
+        )
+
+        if request.args.get("detail") == "true":
+            stmt = (
+                stmt
+                # Join with the UserAccount table to get details about the user who added the book
+                .join(md.Book.book_added_by)
+                # Perform an outer join with the Borrow table to include borrow details (if any)
+                # Outer join ensures that books without borrow records are still included
+                .outerjoin(md.Book.borrows).options(
+                    # Use joinedload to eagerly load the book_added_by relationship
+                    # and restrict the loaded fields to only first_name and last_name from the UserAccount table
+                    joinedload(md.Book.book_added_by).load_only(
+                        md.UserAccount.first_name, md.UserAccount.last_name
+                    ),
+                    # Use joinedload to eagerly load the borrows relationship
+                    # and restrict the loaded fields to only id, borrowed_by_id, borrow_date, and is_returned from the Borrow table
+                    joinedload(md.Book.borrows).load_only(
+                        md.Borrow.id,
+                        md.Borrow.borrowed_by_id,
+                        md.Borrow.borrow_date,
+                        md.Borrow.is_returned,
+                    ),
+                    # Use joinedload to eagerly load the borrowed_by relationship within the borrows relationship
+                    # and restrict the loaded fields to only first_name and last_name from the UserAccount table
+                    joinedload(md.Book.borrows)
+                    .joinedload(md.Borrow.borrowed_by)
+                    .load_only(md.UserAccount.first_name, md.UserAccount.last_name),
+                )
+            )
+            schema = pmd.MoreBookDetailSchema
+
+        book = session.scalars(stmt).first()
+        book = schema.model_validate(book)
         return jsonify({"book": book.model_dump(), "queries": [sql_compile(stmt)]})
 
     @book_namespace.expect(update_book_input)
