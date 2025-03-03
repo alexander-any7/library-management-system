@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import dialect as PostgresDialect
 from sqlalchemy.dialects.sqlite import dialect as SqliteDialect
@@ -30,3 +32,7 @@ session = Session(engine)
 
 def sql_compile(clause: DQLDMLClauseElement):
     return str(clause.compile(dialect=dialect(), compile_kwargs={"literal_binds": True}))
+
+
+def calculate_due_date(**kwargs):
+    return kwargs.get("date", datetime.now()) + timedelta(days=14)

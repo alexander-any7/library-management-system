@@ -4,13 +4,12 @@ from http import HTTPStatus
 from flask import jsonify, make_response, request
 from flask_jwt_extended import current_user
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import select
-from sqlalchemy.sql import delete, insert, update
+from sqlalchemy import delete, func, insert, select, update
 
 import src.models as md
 import src.p_models as pmd
 from src.auth.oauth import admin_required
-from src.utils import session, sql_compile
+from src.utils import calculate_due_date, session, sql_compile
 
 book_namespace = Namespace("Books", description="Book operations", path="/")
 
@@ -35,6 +34,15 @@ update_book_input = book_namespace.model(
         "isbn": fields.String(description="ISBN"),
         "quantity": fields.Integer(description="Quantity"),
         "location": fields.String(description="Location"),
+    },
+)
+
+
+borrow_book_input = book_namespace.model(
+    "BorrowBookInput",
+    {
+        "book_id": fields.Integer(required=True, description="Book ID"),
+        "borrower_id": fields.Integer(required=True, description="Borrower ID"),
     },
 )
 
@@ -187,6 +195,70 @@ class Book(Resource):
             session.commit()
             return make_response(
                 jsonify(message="Book deleted successfully", queries=queries), HTTPStatus.OK
+            )
+        except Exception as e:
+            session.rollback()
+            return make_response(
+                jsonify(error=str(e), queries=queries), HTTPStatus.INTERNAL_SERVER_ERROR
+            )
+
+
+@book_namespace.route("/borrow")
+class BorrowBook(Resource):
+    @admin_required
+    @book_namespace.expect(borrow_book_input)
+    def post(self):
+        data = request.json
+        book_id = data["book_id"]
+        borrower_id = data["borrower_id"]
+        stmt = select(func.count()).where(md.Borrow.borrowed_by_id == borrower_id)
+        queries = [sql_compile(stmt)]
+        borrow_count = session.scalar(stmt)
+        if borrow_count >= 5:
+            return make_response(
+                jsonify(
+                    error="Borrower has reached the maximum limit of 5 borrowed books",
+                    queries=queries,
+                ),
+                HTTPStatus.BAD_REQUEST,
+            )
+
+        stmt = select(md.Book.id, md.Book.current_quantity).where(md.Book.id == book_id)
+        queries.append(sql_compile(stmt))
+        book = session.execute(stmt).mappings().first()
+        if not book:
+            return make_response(
+                jsonify(error="Book not found", queries=queries), HTTPStatus.NOT_FOUND
+            )
+
+        if book.current_quantity == 0:
+            return make_response(
+                jsonify(error="Book is out of stock or is borrowed", queries=queries),
+                HTTPStatus.BAD_REQUEST,
+            )
+
+        due_date = calculate_due_date()
+        stmt = insert(md.Borrow).values(
+            book_id=book_id,
+            borrowed_by_id=borrower_id,
+            given_by_id=current_user.id,
+            borrow_date=datetime.now(),
+            due_date=due_date,
+        )
+        queries.append(sql_compile(stmt))
+
+        try:
+            session.execute(stmt)
+            stmt = (
+                update(md.Book)
+                .where(md.Book.id == book_id)
+                .values(current_quantity=md.Book.current_quantity - 1)
+            )
+            queries.append(sql_compile(stmt))
+            session.execute(stmt)
+            session.commit()
+            return make_response(
+                jsonify(message="Book borrowed successfully", queries=queries), HTTPStatus.CREATED
             )
         except Exception as e:
             session.rollback()
