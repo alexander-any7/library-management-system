@@ -103,6 +103,7 @@ class Borrow(Base):
     received_by_id = mapped_column(ForeignKey("user_account.id"))
     borrow_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     due_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    return_date: Mapped[datetime] = mapped_column(DateTime)
     comments: Mapped[str] = mapped_column(String)
     is_returned: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="0"

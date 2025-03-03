@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, insert, select, update
 import src.models as md
 import src.p_models as pmd
 from src.auth.oauth import admin_required
-from src.utils import calculate_due_date, session, sql_compile
+from src.utils import calculate_due_date, calculate_fine, session, sql_compile
 
 book_namespace = Namespace("Books", description="Book operations", path="/")
 
@@ -43,6 +43,14 @@ borrow_book_input = book_namespace.model(
     {
         "book_id": fields.Integer(required=True, description="Book ID"),
         "borrower_id": fields.Integer(required=True, description="Borrower ID"),
+    },
+)
+
+
+return_book_input = book_namespace.model(
+    "ReturnBookInput",
+    {
+        "borrow_id": fields.Integer(required=True, description="Borrower ID"),
     },
 )
 
@@ -246,22 +254,63 @@ class BorrowBook(Resource):
             due_date=due_date,
         )
         queries.append(sql_compile(stmt))
+        session.execute(stmt)
+        stmt = (
+            update(md.Book)
+            .where(md.Book.id == book_id)
+            .values(current_quantity=md.Book.current_quantity - 1)
+        )
+        queries.append(sql_compile(stmt))
+        session.execute(stmt)
+        session.commit()
+        return make_response(
+            jsonify(message="Book borrowed successfully", queries=queries), HTTPStatus.CREATED
+        )
 
-        try:
-            session.execute(stmt)
-            stmt = (
-                update(md.Book)
-                .where(md.Book.id == book_id)
-                .values(current_quantity=md.Book.current_quantity - 1)
+
+@book_namespace.route("/return")
+class ReturnBook(Resource):
+    @admin_required
+    @book_namespace.expect(return_book_input)
+    def post(self):
+        data = request.json
+        borrow_id = data["borrow_id"]
+        stmt = select(md.Borrow).where(md.Borrow.id == borrow_id)
+        queries = [sql_compile(stmt)]
+        borrow = session.scalars(stmt).first()
+        if not borrow:
+            return make_response(
+                jsonify(error="Borrow record not found", queries=queries), HTTPStatus.NOT_FOUND
+            )
+        if borrow.is_returned:
+            return make_response(
+                jsonify(error="Book already returned", queries=queries), HTTPStatus.BAD_REQUEST
+            )
+        now = datetime.now()
+        stmt = (
+            update(md.Borrow)
+            .where(md.Borrow.id == borrow_id)
+            .values(is_returned=True, return_date=now, received_by_id=current_user.id)
+        )
+        queries.append(sql_compile(stmt))
+        session.execute(stmt)
+        stmt = (
+            update(md.Book)
+            .where(md.Book.id == borrow.book_id)
+            .values(current_quantity=md.Book.current_quantity + 1)
+        )
+        queries.append(sql_compile(stmt))
+        session.execute(stmt)
+        if borrow.due_date.date() < now.date():
+            fine = calculate_fine(date=borrow.due_date)
+            stmt = insert(md.Fine).values(
+                borrow_id=borrow_id,
+                amount=fine,
+                date_created=now,
             )
             queries.append(sql_compile(stmt))
             session.execute(stmt)
-            session.commit()
-            return make_response(
-                jsonify(message="Book borrowed successfully", queries=queries), HTTPStatus.CREATED
-            )
-        except Exception as e:
-            session.rollback()
-            return make_response(
-                jsonify(error=str(e), queries=queries), HTTPStatus.INTERNAL_SERVER_ERROR
-            )
+        session.commit()
+        return make_response(
+            jsonify(message="Book returned successfully", queries=queries), HTTPStatus.OK
+        )

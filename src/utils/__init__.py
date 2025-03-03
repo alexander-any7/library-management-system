@@ -36,3 +36,11 @@ def sql_compile(clause: DQLDMLClauseElement):
 
 def calculate_due_date(**kwargs):
     return kwargs.get("date", datetime.now()) + timedelta(days=14)
+
+
+def calculate_fine(**kwargs):
+    date: datetime = kwargs.get("date")
+    if date is None:
+        return 0
+    days = (datetime.now() - date).days
+    return days * 100 if days > 0 else 0
