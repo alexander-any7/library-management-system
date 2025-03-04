@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import DQLDMLClauseElement
 from werkzeug.security import check_password_hash, generate_password_hash
 
-PAYMENT_METHODS = ["cash", "debit", "credit", "paypal", "stripe"]
+PAYMENT_METHODS = ("cash", "debit", "credit", "paypal", "stripe")
+VALID_USER_TYPES = ("student", "external", "admin")
 
 
 def hash_password(self, password):

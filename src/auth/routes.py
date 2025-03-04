@@ -8,7 +8,7 @@ from flask_jwt_extended import (
     jwt_required,
 )
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, or_, select, update
 
 from src import models as md
 from src import p_models as pmd
@@ -85,7 +85,9 @@ class Login(Resource):
         additional_claims = {"role": user.role}
         access_token = create_access_token(identity=user, additional_claims=additional_claims)
         refresh_token = create_refresh_token(identity=user, additional_claims=additional_claims)
-        return jsonify(access_token=access_token, refresh_token=refresh_token, query=sql_compile(stmt))
+        return jsonify(
+            access_token=access_token, refresh_token=refresh_token, query=sql_compile(stmt)
+        )
 
 
 @auth_namespace.route("/refresh")
@@ -134,6 +136,18 @@ class ListUsers(Resource):
     @admin_required
     def get(self):
         stmt = select(md.UserAccount).order_by(md.UserAccount.first_name)
+        email = request.args.get("email")
+        if email:
+            stmt = stmt.where(md.UserAccount.email.ilike(f"%{email}%"))
+
+        name = request.args.get("name")
+        if name:
+            stmt = stmt.where(
+                or_(
+                    md.UserAccount.first_name.ilike(f"%{name}%"),
+                    md.UserAccount.last_name.ilike(f"%{name}%"),
+                )
+            )
         users = session.execute(stmt).scalars().all()
         users = [pmd.ListUsersSchema.model_validate(user) for user in users]
         return {"users": [user.model_dump() for user in users], "queries": [sql_compile(stmt)]}
@@ -171,7 +185,9 @@ class GetUser(Resource):
             if name in data:
                 update_data[name] = data[name]
 
-        update_stmt = update(md.UserAccount).where(md.UserAccount.id == user_id).values(update_data)
+        update_stmt = (
+            update(md.UserAccount).where(md.UserAccount.id == user_id).values(update_data)
+        )
         queries = [sql_compile(update_stmt)]
         result = session.execute(update_stmt)
         if result.rowcount == 0:

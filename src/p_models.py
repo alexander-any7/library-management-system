@@ -25,8 +25,16 @@ class UserDetailSchema(BaseModel):
     last_name: str
     is_active: bool
     role: str
-    # categories_added: List["Category"] = []
-    # books_added: List["Book"] = []
+
+
+class MoreUserDetailSchema(UserDetailSchema):
+    borrows: list["MinimalBorrowSchema"]
+    fines: list["FineListSchema"]
+
+
+class AdminUserDetailSchema(MoreUserDetailSchema):
+    categories_added: list["ListCategorySchema"]
+    books_added: list["ListBookSchema"]
 
 
 class ListCategorySchema(BaseModel):
@@ -37,24 +45,34 @@ class ListCategorySchema(BaseModel):
 class CategoryDetailSchema(BaseModel):
     id: int
     name: str
+    books: list["MinimalBookDetailSchema"]
+
+    @field_validator("books", mode="before")
+    def list_books(cls, value):
+        return [MinimalBookDetailSchema.model_validate(book) for book in value]
+
+
+class AdminCategoryDetailSchema(CategoryDetailSchema):
     category_added_by: str
-    # books: List["Book"] = []
 
     @field_validator("category_added_by", mode="before")
-    def convert_added_by_to_string(cls, value):
+    def convert_category_added_by_to_string(cls, value):
         return str(value)
 
 
-class ListBookSchema(BaseModel):
+class MinimalBookDetailSchema(BaseModel):
     id: int
     title: str
     author: str
+    location: str
+    is_available: bool
+
+
+class ListBookSchema(MinimalBookDetailSchema):
     isbn: str
     book_category: str
     current_quantity: int
     date_added: datetime
-    location: str
-    is_available: bool
 
     @field_validator("book_category", mode="before")
     def convert_book_category_to_string(cls, value):
@@ -76,7 +94,6 @@ class MoreBookDetailSchema(BookDetailSchema):
     @field_validator("borrows", mode="before")
     def list_borrows(cls, value):
         return [ListBorrowSchema.model_validate(borrow) for borrow in value]
-        # return [borrow.model_dump() for borrow in borrows]
 
 
 class MinimalBorrowSchema(BaseModel):
@@ -113,6 +130,25 @@ class DetailBorrowSchema(ListBorrowSchema):
     comments: Optional[str]
 
 
+class AdminListBorrowSchema(MinimalBorrowSchema):
+    given_by: str
+    due_date: datetime
+    received_by: Optional[str]
+    borrowed_by: ListUsersSchema
+
+    @field_validator("borrowed_by", mode="before")
+    def borrowed_by(cls, value):
+        return ListUsersSchema.model_validate(value)
+
+    @field_validator("given_by", mode="before")
+    def convert_given_by_to_string(cls, value):
+        return str(value)
+
+    @field_validator("received_by", mode="before")
+    def convert_received_by_to_string(cls, value):
+        return str(value)
+
+
 class FineListSchema(BaseModel):
     id: int
     borrow: str
@@ -127,10 +163,30 @@ class FineListSchema(BaseModel):
 
 
 class FineDetailSchema(FineListSchema):
-    payment_method: Optional[datetime]
+    payment_method: Optional[str]
     transaction_id: Optional[str]
     collected_by: Optional[str]
 
     @field_validator("collected_by", mode="before")
     def convert_collected_by_to_string(cls, value):
         return str(value)
+
+
+class AdminFineListSchema(BaseModel):
+    id: int
+    borrow: AdminListBorrowSchema
+    amount: float
+    paid: bool = False
+    date_created: datetime
+    date_paid: Optional[datetime]
+    payment_method: Optional[str]
+    transaction_id: Optional[str]
+    collected_by: Optional[str]
+
+    @field_validator("collected_by", mode="before")
+    def convert_collected_by_to_string(cls, value):
+        return str(value)
+
+    @field_validator("borrow", mode="before")
+    def displat_borrow(cls, value):
+        return AdminListBorrowSchema.model_validate(value)

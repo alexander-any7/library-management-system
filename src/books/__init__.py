@@ -39,6 +39,36 @@ update_book_input = book_namespace.model(
 )
 
 
+@book_namespace.route("/categories")
+class Categories(Resource):
+    def get(self):
+        stmt = select(md.Category.id, md.Category.name)
+        categories = session.execute(stmt).mappings().all()
+        categories = [pmd.ListCategorySchema.model_validate(category) for category in categories]
+        return jsonify(
+            {
+                "categories": [category.model_dump() for category in categories],
+                "queries": [sql_compile(stmt)],
+            }
+        )
+
+
+@book_namespace.route("/categories/<int:category_id>")
+@book_namespace.doc(params={"category_id": "Category ID"})
+class Category(Resource):
+    @jwt_required(optional=True)
+    def get(self, category_id):
+        stmt = select(md.Category).where(md.Category.id == category_id)
+        schema = pmd.CategoryDetailSchema
+        if request.args.get("detail") == "true" and current_user and current_user.role == "admin":
+            stmt = stmt.options(joinedload(md.Category.category_added_by))
+            schema = pmd.AdminCategoryDetailSchema
+
+        category = session.scalars(stmt).first()
+        category = schema.model_validate(category)
+        return jsonify({"category": category.model_dump(), "queries": [sql_compile(stmt)]})
+
+
 @book_namespace.route("/books")
 class Books(Resource):
     def get(self):
@@ -59,8 +89,7 @@ class Books(Resource):
         if category:
             stmt = stmt.where(md.Category.name == category)
 
-        res = session.scalars(stmt)
-        books = res.all()
+        books = session.scalars(stmt).all()
         books = [pmd.ListBookSchema.model_validate(book) for book in books]
         return jsonify(
             {"books": [book.model_dump() for book in books], "queries": [sql_compile(stmt)]}
