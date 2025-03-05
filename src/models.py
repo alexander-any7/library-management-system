@@ -103,8 +103,8 @@ class Borrow(Base):
     received_by_id = mapped_column(ForeignKey("user_account.id"))
     borrow_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     due_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    return_date: Mapped[datetime] = mapped_column(DateTime)
-    comments: Mapped[str] = mapped_column(String)
+    return_date: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    comments: Mapped[str] = mapped_column(String, nullable=True)
     is_returned: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="0"
     )
@@ -135,10 +135,10 @@ class Fine(Base):
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     paid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
     date_created: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    date_paid: Mapped[datetime] = mapped_column(DateTime)
-    payment_method: Mapped[str] = mapped_column(String(15))
-    transaction_id: Mapped[str] = mapped_column(String(100), unique=True)
-    collected_by_id = mapped_column(ForeignKey("user_account.id"))
+    date_paid: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    payment_method: Mapped[str] = mapped_column(String(15), nullable=True)
+    transaction_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=True)
+    collected_by_id = mapped_column(ForeignKey("user_account.id"), nullable=True)
 
     borrow: Mapped[Borrow] = relationship(back_populates="fines")
     collected_by: Mapped[UserAccount] = relationship(back_populates="fines_collected")

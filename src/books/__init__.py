@@ -22,7 +22,7 @@ new_book_input = book_namespace.model(
         "category_id": fields.Integer(required=True, description="Category ID"),
         "isbn": fields.String(required=True, description="ISBN"),
         "quantity": fields.Integer(required=True, description="Quantity"),
-        "location": fields.String(description="Location"),
+        "location": fields.String(required=True, description="Location"),
     },
 )
 
@@ -107,6 +107,7 @@ class Books(Resource):
             isbn=data["isbn"],
             original_quantity=data["quantity"],
             current_quantity=data["quantity"],
+            location=data["location"],
             date_added=datetime.now(),
             added_by_id=current_user.id,
         )
@@ -120,12 +121,14 @@ class Books(Resource):
                 isbn=book.isbn,
                 original_quantity=book.original_quantity,
                 current_quantity=book.current_quantity,
+                location=book.location,
                 date_added=book.date_added,
                 added_by_id=book.added_by_id,
             )
         )
 
         session.add(book)
+        session.flush()
         return make_response(jsonify(book_id=book.id, queries=[query]), HTTPStatus.CREATED)
 
 

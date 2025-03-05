@@ -1,13 +1,14 @@
+import os
 from datetime import datetime, timedelta
 from functools import wraps
 
 from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import dialect as PostgresDialect
-from sqlalchemy.dialects.sqlite import dialect as SqliteDialect
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.sql.elements import DQLDMLClauseElement
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from config import Config, config_dict
 
 PAYMENT_METHODS = ("cash", "debit", "credit", "paypal", "stripe")
 VALID_USER_TYPES = ("student", "external", "admin")
@@ -21,21 +22,15 @@ def check_password(password, password_hash):
     return check_password_hash(password_hash, password)
 
 
-db = "sqlite"
-if db == "sqlite":
-    engine = create_engine("sqlite:///db.sqlite", echo=True)
-    dialect = SqliteDialect
-elif db == "postgres":
-    engine = engine = create_engine("postgresql://postgres:12345@localhost/library", echo=True)
-    dialect = PostgresDialect
-else:
-    raise ValueError("Invalid database")
+config: Config = config_dict[os.getenv("FLASK_ENV", "testing")]
+
+engine = create_engine(config.SQLALCHEMY_DATABASE_URI, echo=True)
+dialect = config.DIALECT
+
+session = scoped_session(sessionmaker(bind=engine))
 
 
-session = Session(engine)
-
-
-def sql_compile(clause: DQLDMLClauseElement):
+def sql_compile(clause: DQLDMLClauseElement, dialect=dialect) -> str:
     return str(clause.compile(dialect=dialect(), compile_kwargs={"literal_binds": True}))
 
 

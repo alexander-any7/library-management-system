@@ -3,6 +3,7 @@ from flask_jwt_extended import JWTManager
 from flask_restx import Api
 from sqlalchemy import select, text  # noqa
 
+from config import config_dict, DevConfig
 from sql import CREATE_POSTGRES, CREATE_SQLITE
 from src import models as md
 from src.auth.routes import auth_namespace
@@ -12,10 +13,9 @@ from src.reports import reports_namespace
 from src.utils import session
 
 
-def create_app(db="sqlite"):
+def create_app(db="sqlite", config=config_dict['dev']):
     app = Flask(__name__)
-    app.config["JWT_SECRET_KEY"] = "super-secret"
-    app.config["JWT_VERIFY_SUB"] = False
+    app.config.from_object(config)
     authorizations = {
         "Bearer Auth": {
             "type": "apiKey",
@@ -28,14 +28,16 @@ def create_app(db="sqlite"):
     api = Api(app, authorizations=authorizations, security="Bearer Auth")
     jwt = JWTManager(app)
 
-    if db == "sqlite":
+    if config.DB == "sqlite":
         statements = CREATE_SQLITE.split(";")
-    elif db == "postgres":
+    elif config.DB == "postgres":
         statements = CREATE_POSTGRES.split(";")  # noqa
 
-    # for stmt in statements:
-    #     session.execute(text(stmt))
-    # session.commit()
+    if isinstance(config, DevConfig):
+        print("Creating tables")
+        # for stmt in statements:
+        #     session.execute(text(stmt))
+        # session.commit()
 
     @jwt.user_identity_loader
     def user_identity_lookup(user):

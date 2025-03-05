@@ -1,3 +1,6 @@
 {
-	"cSpell.words": ["joinedload", "outerjoin"]
+	"cSpell.words": ["joinedload", "outerjoin"],
+	"python.testing.pytestArgs": ["src"],
+	"python.testing.unittestEnabled": false,
+	"python.testing.pytestEnabled": true
 }
