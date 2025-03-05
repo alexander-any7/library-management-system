@@ -1,3 +1,4 @@
+import logging
 import unittest
 from datetime import datetime, timedelta
 from http import HTTPStatus
@@ -5,15 +6,22 @@ from random import choice, choices, randint
 
 from faker import Faker
 from flask_jwt_extended import create_access_token
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from werkzeug.security import generate_password_hash
 
 import src.models as md
 from src import create_app
 from src.models import Base
-from src.utils import VALID_USER_TYPES, engine, session
+from src.utils import (
+    VALID_USER_TYPES,
+    calculate_due_date,
+    check_overdue_and_create_fine,
+    engine,
+    session,
+)
 
 fake = Faker()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 def populate_test_db():
@@ -170,7 +178,38 @@ class AllTestCase(unittest.TestCase):
         self.assertFalse(borrowed.is_returned)
         self.assertTrue(borrowed.given_by_id == self.admin.id)
 
-    def test_calculate_overdue_fines(self):
+    def test_return_a_book(self):
+        book = session.query(md.Book).first()
+        borrow_date = datetime.fromisoformat("2021-01-01 00:00:00")
+        due_date = borrow_date + timedelta(days=randint(3, 30))
+        borrow = md.Borrow(
+            book_id=book.id,
+            borrowed_by_id=self.student.id,
+            given_by_id=self.admin.id,
+            received_by_id=self.admin.id,
+            is_returned=False,
+            borrow_date=borrow_date,
+            due_date=due_date,
+        )
+        session.add(borrow)
+        session.commit()
+
+        headers = {"Authorization": f"Bearer {self.admin_token}"}
+        data = {
+            "borrow_id": borrow.id,
+        }
+        response = self.client.post("/return-book", json=data, headers=headers)
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+        borrow = session.query(md.Borrow).where(md.Borrow.id == borrow.id).first()
+        self.assertTrue(borrow)
+        self.assertTrue(borrow.is_returned)
+        self.assertTrue(borrow.received_by_id == self.admin.id)
+
+        fine = session.query(md.Fine).where(md.Fine.borrow_id == borrow.id).first()
+        self.assertTrue(fine)
+        self.assertTrue(fine.amount > 0)
+
+    def test_fines_report(self):
         student_2 = md.UserAccount(
             email=fake.email(),
             first_name=fake.first_name(),
@@ -181,13 +220,13 @@ class AllTestCase(unittest.TestCase):
         session.add(student_2)
         session.flush()
         books = choices(session.query(md.Book).all(), k=6)
-        for book in books[:2]:
-            borrow_date = datetime.now() - timedelta(days=randint(1, 60))
-            due_date = borrow_date + timedelta(days=randint(3, 30))
-            session.add(
+        borrows = []
+        for book in books:
+            borrow_date = datetime.fromisoformat("2021-01-01 00:00:00")
+            due_date = calculate_due_date(date=borrow_date)
+            borrows.append(
                 md.Borrow(
                     book_id=book.id,
-                    borrowed_by_id=self.student.id,
                     given_by_id=self.admin.id,
                     received_by_id=self.admin.id,
                     is_returned=False,
@@ -195,18 +234,29 @@ class AllTestCase(unittest.TestCase):
                     due_date=due_date,
                 )
             )
-        for book in books[3:]:
-            borrow_date = datetime.now() - timedelta(days=randint(1, 60))
-            due_date = borrow_date + timedelta(days=randint(3, 30))
-            session.add(
-                md.Borrow(
-                    book_id=book.id,
-                    borrowed_by_id=student_2.id,
-                    given_by_id=self.admin.id,
-                    received_by_id=self.admin.id,
-                    is_returned=False,
-                    borrow_date=borrow_date,
-                    due_date=due_date,
-                )
-            )
+        for borrow in borrows[:3]:
+            borrow.borrowed_by_id = self.student.id
+        for borrow in borrows[3:]:
+            borrow.borrowed_by_id = student_2.id
+
+        session.add_all(borrows)
         session.commit()
+
+        check_overdue_and_create_fine(borrows[0])
+        check_overdue_and_create_fine(borrows[3])
+
+        headers = {"Authorization": f"Bearer {self.admin_token}"}
+        response = self.client.get("/overdue-report", headers=headers)
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+        self.assertTrue(response.json["borrows"])
+        self.assertTrue(response.json["queries"])
+
+        response = self.client.get("/fines-report", headers=headers)
+        self.assertEqual(response.status_code, HTTPStatus.OK)
+        self.assertTrue(response.json["fines"])
+        self.assertTrue(response.json["total"]["unpaid"] > 0)
+        self.assertFalse(response.json["total"]["paid"])
+
+        total_fines = session.query(md.Fine).with_entities(func.sum(md.Fine.amount)).scalar()
+        self.assertTrue(total_fines == response.json["total"]["unpaid"])
+        assert "total" in response.json

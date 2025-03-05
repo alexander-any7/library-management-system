@@ -14,7 +14,7 @@ from src.utils import (
     PAYMENT_METHODS,
     atomic_transaction,
     calculate_due_date,
-    calculate_fine,
+    check_overdue_and_create_fine,
     session,
     sql_compile,
 )
@@ -140,15 +140,10 @@ class ReturnBook(Resource):
         )
         queries.append(sql_compile(stmt))
         session.execute(stmt)
-        if borrow.due_date.date() < now.date():
-            fine = calculate_fine(date=borrow.due_date)
-            stmt = insert(md.Fine).values(
-                borrow_id=borrow_id,
-                amount=fine,
-                date_created=now,
-            )
-            queries.append(sql_compile(stmt))
-            session.execute(stmt)
+        overdue_query = check_overdue_and_create_fine(borrow, now, commit=False)
+        if overdue_query:
+            queries.append(overdue_query)
+
         session.commit()
         return make_response(
             jsonify(message="Book returned successfully", queries=queries), HTTPStatus.OK
@@ -237,13 +232,43 @@ class Fines(Resource):
         stmt = select(md.Fine).where(
             md.Fine.borrow.has(md.Borrow.borrowed_by_id == current_user.id)
         )
+        # Calculate total fines using the same filters
+        total_query = (
+            select(func.sum(md.Fine.amount).label("total_fines"))
+            .join(md.Borrow, md.Fine.borrow_id == md.Borrow.id)
+            .join(md.UserAccount, md.Borrow.borrowed_by_id == md.UserAccount.id)
+        ).where(md.UserAccount.id == current_user.id)
+
+        queries = []
+        status = request.args.get("status")
+        paid_query = total_query.where(md.Fine.paid.is_(True))
+        unpaid_query = total_query.where(md.Fine.paid.is_(False))
+        paid = None
+        unpaid = None
+
+        if status == "paid":
+            stmt = stmt.where(md.Fine.paid.is_(True))
+            queries = [sql_compile(paid_query)]
+            paid = session.execute(paid_query).scalar()
+        elif status == "unpaid":
+            stmt = stmt.where(md.Fine.paid.is_(False))
+            queries = [sql_compile(unpaid_query)]
+            unpaid = session.execute(unpaid_query).scalar()
+        else:
+            paid = session.execute(paid_query).scalar()
+            unpaid = session.execute(unpaid_query).scalar()
+            queries = [sql_compile(stmt), sql_compile(paid_query), sql_compile(unpaid_query)]
+
+        queries.insert(0, sql_compile(stmt))
         fines = session.execute(stmt).scalars().all()
         fines = [pmd.FineListSchema.model_validate(fine) for fine in fines]
         return make_response(
             jsonify(
                 {
                     "fines": [fine.model_dump() for fine in fines],
-                    "queries": [sql_compile(stmt)],
+                    "total_paid": paid,
+                    "total_unpaid": unpaid,
+                    "queries": queries,
                 }
             )
         )
@@ -321,7 +346,10 @@ class PayFine(Resource):
             )
         if method == "cash" and current_user.role != "admin":
             return make_response(
-                jsonify(error="Only admins can accept fines in cash in person at the library", queries=[]),
+                jsonify(
+                    error="Only admins can accept fines in cash in person at the library",
+                    queries=[],
+                ),
                 HTTPStatus.FORBIDDEN,
             )
         stmt = (
@@ -333,7 +361,8 @@ class PayFine(Resource):
         fine = session.execute(stmt).mappings().first()
         if not fine:
             return make_response(
-                jsonify(error="Fine not found or is already paid", queries=queries), HTTPStatus.NOT_FOUND
+                jsonify(error="Fine not found or is already paid", queries=queries),
+                HTTPStatus.NOT_FOUND,
             )
 
         if method == "cash":
