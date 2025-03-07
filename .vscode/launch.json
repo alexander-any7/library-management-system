@@ -8,9 +8,17 @@
             "name": "Python Debugger: Flask",
             "type": "debugpy",
             "request": "launch",
-            "program": "api.py",
+            "program": "./backend/api.py",
             "console": "integratedTerminal",
             "justMyCode": false,
+        },
+        {
+            "name": "Flet Debug",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./gui/src/main.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
         }
     ]
 }
