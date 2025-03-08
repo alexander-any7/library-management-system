@@ -1,6 +1,6 @@
 from http import HTTPStatus
 
-from flask import Response, jsonify, make_response, request
+from flask import jsonify, make_response, request
 from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
@@ -8,12 +8,12 @@ from flask_jwt_extended import (
     jwt_required,
 )
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import and_, or_, select, update
-
+from sqlalchemy import and_, insert, or_, select, update
+from sqlalchemy.orm import joinedload
 from src import models as md
 from src import p_models as pmd
 from src.auth.oauth import admin_required
-from src.utils import atomic_transaction, check_password, session, sql_compile
+from src.utils import atomic_transaction, check_password, hash_password, session, sql_compile
 
 auth_namespace = Namespace("Auth", description="Authentication operations", path="/")
 
@@ -25,6 +25,9 @@ register_input = auth_namespace.model(
         "first_name": fields.String(required=True, description="First Name"),
         "last_name": fields.String(required=True, description="Last Name"),
         "password": fields.String(required=True, description="Password"),
+        "role": fields.String(
+            required=True, description="User Type", enum=["student", "external"]
+        ),
     },
 )
 
@@ -55,10 +58,41 @@ update_user_input = auth_namespace.model(
 @auth_namespace.route("/register", methods=["POST"])
 @auth_namespace.expect(register_input)
 class Register(Resource):
+    @atomic_transaction
     def post(self):
         data = request.json
-        print(data)
-        return Response(status=201)
+        email = data.get("email", None)
+        first_name = data.get("first_name", None)
+        last_name = data.get("last_name", None)
+        password = data.get("password", None)
+        role = data.get("role", None)
+
+        if not all([email, first_name, last_name, password, role]):
+            return make_response(
+                jsonify(message="Missing required fields"), HTTPStatus.BAD_REQUEST
+            )
+        if role not in ("student", "external"):
+            return make_response(
+                jsonify(message="Invalid role. Must be one of student or external"),
+                HTTPStatus.BAD_REQUEST,
+            )
+        stmt = select(md.UserAccount).where(md.UserAccount.email == email)
+        queries = [sql_compile(stmt)]
+        user = session.execute(stmt).scalars().first()
+        if user:
+            return make_response(
+                jsonify(message="User with email already exists", query=sql_compile(stmt)),
+                HTTPStatus.BAD_REQUEST,
+            )
+        password = hash_password(password)
+        stmt = insert(md.UserAccount).values(
+            email=email, first_name=first_name, last_name=last_name, password=password, role=role
+        )
+        queries.append(sql_compile(stmt))
+        session.execute(stmt)
+        return make_response(
+            jsonify(message="User created successfully", queries=[queries]), HTTPStatus.CREATED
+        )
 
 
 @auth_namespace.route("/login", methods=["POST"])
@@ -78,7 +112,7 @@ class Login(Resource):
         user = session.execute(stmt).mappings().first()
         if not user or not user.is_active or not check_password(password, user.password):
             return make_response(
-                jsonify(message="Wrong username or password", query=sql_compile(stmt)),
+                jsonify(message="Wrong username or password", queries=[sql_compile(stmt)]),
                 HTTPStatus.UNAUTHORIZED,
             )
 
@@ -86,7 +120,7 @@ class Login(Resource):
         access_token = create_access_token(identity=user, additional_claims=additional_claims)
         refresh_token = create_refresh_token(identity=user, additional_claims=additional_claims)
         return jsonify(
-            access_token=access_token, refresh_token=refresh_token, query=sql_compile(stmt)
+            access_token=access_token, refresh_token=refresh_token, queries=[sql_compile(stmt)]
         )
 
 
@@ -165,8 +199,24 @@ class GetUser(Resource):
                 jsonify(message="User not found", queries=[sql_compile(stmt)]),
                 HTTPStatus.NOT_FOUND,
             )
-        user = pmd.UserDetailSchema.model_validate(user)
-        return {"user": user.model_dump(), "queries": [sql_compile(stmt)]}
+        schema = pmd.UserDetailSchema
+        queries = [sql_compile(stmt)]
+        if request.args.get("detail") == "true":
+            stmt = (
+                stmt.join(md.Borrow, md.Borrow.borrowed_by_id == md.UserAccount.id)
+                .join(md.Fine, md.Fine.borrow_id == md.Borrow.id)  # Join Fine with Borrow
+                .options(
+                    joinedload(md.UserAccount.books_borrowed).joinedload(
+                        md.Borrow.fines
+                    )  # Eager load Borrow and Fines
+                )
+            )
+            queries.append(sql_compile(stmt))
+            user = session.scalars(stmt).first()
+            schema = pmd.MoreUserDetailSchema
+
+        user = schema.model_validate(user)
+        return make_response(jsonify(user=user.model_dump(), queries=queries))
 
     @auth_namespace.expect(update_user_input)
     @admin_required

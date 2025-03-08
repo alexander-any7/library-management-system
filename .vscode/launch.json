@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "./backend/api.py",
             "console": "integratedTerminal",
-            "justMyCode": false,
+            "justMyCode": true,
         },
         {
             "name": "Flet Debug",
