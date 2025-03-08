@@ -28,8 +28,12 @@ class UserDetailSchema(BaseModel):
 
 
 class MoreUserDetailSchema(UserDetailSchema):
-    borrows: list["MinimalBorrowSchema"]
-    fines: list["FineListSchema"]
+    books_borrowed: list["MinimalBorrowSchema"]
+    fines_collected: Optional[list["FineListSchema"]]
+
+    @field_validator("books_borrowed", mode="before")
+    def list_borrows(cls, value):
+        return [MinimalBorrowSchema.model_validate(borrow) for borrow in value]
 
 
 class AdminUserDetailSchema(MoreUserDetailSchema):
@@ -101,10 +105,15 @@ class MinimalBorrowSchema(BaseModel):
     borrowed_book: str
     borrow_date: datetime
     is_returned: bool = False
+    fines: list["FineListSchema"]
 
     @field_validator("borrowed_book", mode="before")
     def convert_borrowed_book_to_string(cls, value):
         return str(value)
+
+    @field_validator("fines", mode="before")
+    def list_fines(cls, value):
+        return [FineListSchema.model_validate(fine) for fine in value]
 
 
 class ListBorrowSchema(MinimalBorrowSchema):
@@ -188,5 +197,5 @@ class AdminFineListSchema(BaseModel):
         return str(value)
 
     @field_validator("borrow", mode="before")
-    def displat_borrow(cls, value):
+    def display_borrow(cls, value):
         return AdminListBorrowSchema.model_validate(value)
