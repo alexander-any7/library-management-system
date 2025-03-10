@@ -15,7 +15,7 @@ PAYMENT_METHODS = ("cash", "debit", "credit", "paypal", "stripe")
 VALID_USER_TYPES = ("student", "external", "admin")
 
 
-def hash_password(self, password):
+def hash_password(password):
     return generate_password_hash(password)
 
 

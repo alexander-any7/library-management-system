@@ -1,14 +1,13 @@
 from datetime import datetime
 from http import HTTPStatus
 
+import src.models as md
+import src.p_models as pmd
 from flask import jsonify, make_response, request
 from flask_jwt_extended import current_user, jwt_required
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, insert, or_, select, update
 from sqlalchemy.orm import joinedload
-
-import src.models as md
-import src.p_models as pmd
 from src.auth.oauth import admin_required
 from src.utils import atomic_transaction, session, sql_compile
 
@@ -74,20 +73,24 @@ class Books(Resource):
     def get(self):
         stmt = select(md.Book, md.Category.name).join(md.Category)
         title = request.args.get("title")
+        or_list = []
         if title:
-            stmt = stmt.where(md.Book.title.ilike(f"%{title}%"))
+            or_list.append(md.Book.title.ilike(f"%{title}%"))
 
         author = request.args.get("author")
         if author:
-            stmt = stmt.where(md.Book.author.ilike(f"%{author}%"))
+            or_list.append(md.Book.author.ilike(f"%{author}%"))
 
         isbn = request.args.get("isbn")
         if isbn:
-            stmt = stmt.where(md.Book.isbn.ilike(f"%{isbn}%"))
+            or_list.append(md.Book.isbn.ilike(f"%{isbn}%"))
 
         category = request.args.get("category")
         if category:
-            stmt = stmt.where(md.Category.name == category)
+            or_list.append(md.Category.name == category)
+
+        if or_list:
+            stmt = stmt.where(or_(*or_list))
 
         books = session.scalars(stmt).all()
         books = [pmd.ListBookSchema.model_validate(book) for book in books]
@@ -151,7 +154,7 @@ class Book(Resource):
             .options(joinedload(md.Book.book_category).load_only(md.Category.id, md.Category.name))
         )
 
-        if request.args.get("detail") == "true":
+        if request.args.get("detail") == "true" and current_user and current_user.role == "admin":
             stmt = (
                 stmt
                 # Join with the UserAccount table to get details about the user who added the book

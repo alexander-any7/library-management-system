@@ -11,10 +11,12 @@ from src.books import book_namespace
 from src.borrows import borrow_namespace
 from src.reports import reports_namespace
 from src.utils import session
+from flask_cors import CORS
 
 
 def create_app(db="sqlite", config=config_dict['dev']):
     app = Flask(__name__)
+    CORS(app, origins="*")
     app.config.from_object(config)
     authorizations = {
         "Bearer Auth": {

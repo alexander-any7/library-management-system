@@ -139,6 +139,7 @@ class Trends(Resource):
         user_type = request.args.get("user_type")
         time_filter = request.args.get("time")
         category = request.args.get("category")
+        returned = request.args.get("returned")
 
         stmt = select(md.Borrow)
         if user_type in VALID_USER_TYPES:
@@ -152,6 +153,11 @@ class Trends(Resource):
 
         if category:
             stmt = stmt.join(md.Book).where(md.Book.category_id == category)
+
+        if returned == "true":
+            stmt = stmt.where(md.Borrow.is_returned.is_(True))
+        elif returned == "false":
+            stmt = stmt.where(md.Borrow.is_returned.is_(False))
 
         borrows = session.execute(stmt).scalars().all()
         borrows = [pmd.AdminListBorrowSchema.model_validate(borrow) for borrow in borrows]
