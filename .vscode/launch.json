@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "api.py",
             "console": "integratedTerminal",
-            "justMyCode": false,
+            "justMyCode": true,
         }
     ]
 }

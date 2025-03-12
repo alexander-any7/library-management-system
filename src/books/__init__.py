@@ -1,13 +1,14 @@
 from datetime import datetime
 from http import HTTPStatus
 
-import src.models as md
-import src.p_models as pmd
 from flask import jsonify, make_response, request
 from flask_jwt_extended import current_user, jwt_required
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import delete, insert, or_, select, update
+from sqlalchemy import delete, insert, or_, select, text, update
 from sqlalchemy.orm import joinedload
+
+import src.models as md
+import src.p_models as pmd
 from src.auth.oauth import admin_required
 from src.utils import atomic_transaction, session, sql_compile
 
@@ -41,8 +42,8 @@ update_book_input = book_namespace.model(
 @book_namespace.route("/categories")
 class Categories(Resource):
     def get(self):
-        stmt = select(md.Category.id, md.Category.name)
-        categories = session.execute(stmt).mappings().all()
+        stmt = "SELECT category.id, category.name \nFROM category"
+        categories = session.execute(text(stmt)).mappings().all()
         categories = [pmd.ListCategorySchema.model_validate(category) for category in categories]
         return jsonify(
             {
@@ -57,45 +58,84 @@ class Categories(Resource):
 class Category(Resource):
     @jwt_required(optional=True)
     def get(self, category_id):
-        stmt = select(md.Category).where(md.Category.id == category_id)
-        schema = pmd.CategoryDetailSchema
+        stmt = "SELECT category.id, category.name, category.added_by_id"
         if request.args.get("detail") == "true" and current_user and current_user.role == "admin":
-            stmt = stmt.options(joinedload(md.Category.category_added_by))
-            schema = pmd.AdminCategoryDetailSchema
+            stmt += """, user_account_1.id AS id_1,  user_account_1.first_name || ' ' || user_account_1.last_name AS category_added_by, book.id AS book_id, book.author, book.is_available, book.location, book.title
+                FROM category 
+                LEFT OUTER JOIN user_account AS user_account_1 
+                    ON user_account_1.id = category.added_by_id 
+                LEFT OUTER JOIN book 
+                    ON category.id = book.category_id"""
+        else:
+            stmt += "\nFROM category"
+        stmt += f" WHERE category.id = {category_id}"
+        category = session.execute(text(stmt)).mappings().all()
+        organized_data = {
+            "id": None,
+            "name": None,
+            "added_by_id": None,
+            "category_added_by": None,
+            "books": [],
+        }
 
-        category = session.scalars(stmt).first()
-        category = schema.model_validate(category)
-        return jsonify({"category": category.model_dump(), "queries": [sql_compile(stmt)]})
+        for row in category:
+            if organized_data["id"] is None:
+                organized_data["id"] = row.id
+                organized_data["name"] = row.name
+                organized_data["added_by_id"] = row.added_by_id
+                organized_data["category_added_by"] = row.category_added_by
+
+            if row.book_id is not None:
+                organized_data["books"].append(
+                    {
+                        "id": row.book_id,
+                        "author": row.author,
+                        "is_available": row.is_available,
+                        "location": row.location,
+                        "title": row.title,
+                    }
+                )
+
+        return jsonify({"category": organized_data, "queries": [sql_compile(stmt)]})
 
 
 @book_namespace.route("/books")
 class Books(Resource):
     def get(self):
         stmt = select(md.Book, md.Category.name).join(md.Category)
+        stmt = """SELECT book.id, book.title, book.author, book.isbn, book.category_id, book.original_quantity, book.current_quantity, book.date_added, book.added_by_id, book.is_available, book.location, category.name as book_category
+        FROM book JOIN category ON category.id = book.category_id
+        """
         title = request.args.get("title")
         or_list = []
         if title:
-            or_list.append(md.Book.title.ilike(f"%{title}%"))
+            # or_list.append(md.Book.title.ilike(f"%{title}%"))
+            or_list.append(f"lower(book.title) LIKE lower('%{title}%')")
 
         author = request.args.get("author")
         if author:
-            or_list.append(md.Book.author.ilike(f"%{author}%"))
+            # or_list.append(md.Book.author.ilike(f"%{author}%"))
+            or_list.append(f"lower(book.author) LIKE lower('%{author}%')")
 
         isbn = request.args.get("isbn")
         if isbn:
-            or_list.append(md.Book.isbn.ilike(f"%{isbn}%"))
+            # or_list.append(md.Book.isbn.ilike(f"%{isbn}%"))
+            or_list.append(f"lower(book.isbn) LIKE ('%{isbn}%')")
 
         category = request.args.get("category")
         if category:
-            or_list.append(md.Category.name == category)
+            # or_list.append(md.Category.name == category)
+            or_list.append(f"category.name = '{category}'")
 
         if or_list:
-            stmt = stmt.where(or_(*or_list))
+            stmt = stmt + " WHERE " + " OR ".join(or_list)
 
-        books = session.scalars(stmt).all()
+        books = session.execute(text(stmt)).mappings().all()
         books = [pmd.ListBookSchema.model_validate(book) for book in books]
-        return jsonify(
-            {"books": [book.model_dump() for book in books], "queries": [sql_compile(stmt)]}
+        return make_response(
+            jsonify(
+                {"books": [book.model_dump() for book in books], "queries": [sql_compile(stmt)]}
+            )
         )
 
     @admin_required
@@ -103,36 +143,15 @@ class Books(Resource):
     @book_namespace.expect(new_book_input)
     def post(self):
         data = request.json
-        book = md.Book(
-            title=data["title"],
-            author=data["author"],
-            category_id=data["category_id"],
-            isbn=data["isbn"],
-            original_quantity=data["quantity"],
-            current_quantity=data["quantity"],
-            location=data["location"],
-            date_added=datetime.now(),
-            added_by_id=current_user.id,
-        )
-
-        # Generate INSERT statement
-        query = sql_compile(
-            insert(md.Book).values(
-                title=book.title,
-                author=book.author,
-                category_id=book.category_id,
-                isbn=book.isbn,
-                original_quantity=book.original_quantity,
-                current_quantity=book.current_quantity,
-                location=book.location,
-                date_added=book.date_added,
-                added_by_id=book.added_by_id,
-            )
-        )
-
-        session.add(book)
-        session.flush()
-        return make_response(jsonify(book_id=book.id, queries=[query]), HTTPStatus.CREATED)
+        stmt = f"""INSERT INTO book (title, author, isbn, category_id, original_quantity, current_quantity, date_added, added_by_id, is_available, location)
+            VALUES ('{data["title"]}', '{data["author"]}', '{data["isbn"]}', {data["category_id"]}, {data["quantity"]}, '{data["quantity"]}', '{datetime.now()}', {current_user.id}, 1, '{data["location"]}')
+        """
+        queries = [stmt]
+        session.execute(text(stmt))
+        stmt = "SELECT id FROM book ORDER BY id DESC LIMIT 1"
+        queries.append(stmt)
+        book = session.execute(text(stmt)).mappings().first()
+        return make_response(jsonify(book_id=book.id, queries=queries), HTTPStatus.CREATED)
 
 
 @book_namespace.route("/books/<int:book_id>")

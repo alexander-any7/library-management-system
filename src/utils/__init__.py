@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from functools import wraps
 
-from sqlalchemy import create_engine, insert
+from sqlalchemy import TextClause, create_engine, insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.sql.elements import DQLDMLClauseElement
@@ -32,6 +32,8 @@ session = scoped_session(sessionmaker(bind=engine))
 
 
 def sql_compile(clause: DQLDMLClauseElement, dialect=dialect) -> str:
+    if isinstance(clause, str):
+        return clause
     return str(clause.compile(dialect=dialect(), compile_kwargs={"literal_binds": True}))
 
 
