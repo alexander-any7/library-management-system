@@ -4,10 +4,8 @@ from http import HTTPStatus
 from flask import jsonify, make_response, request
 from flask_jwt_extended import current_user, jwt_required
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import delete, insert, or_, select, text, update
-from sqlalchemy.orm import joinedload
+from sqlalchemy import text
 
-import src.models as md
 import src.p_models as pmd
 from src.auth.oauth import admin_required
 from src.utils import atomic_transaction, session, sql_compile
@@ -58,32 +56,34 @@ class Categories(Resource):
 class Category(Resource):
     @jwt_required(optional=True)
     def get(self, category_id):
-        stmt = "SELECT category.id, category.name, category.added_by_id"
+        detail = False
+        stmt = "SELECT category.id, category.name, category.added_by_id, book.id AS book_id, book.author, book.is_available, book.location, book.title"
         if request.args.get("detail") == "true" and current_user and current_user.role == "admin":
-            stmt += """, user_account_1.id AS id_1,  user_account_1.first_name || ' ' || user_account_1.last_name AS category_added_by, book.id AS book_id, book.author, book.is_available, book.location, book.title
-                FROM category 
-                LEFT OUTER JOIN user_account AS user_account_1 
-                    ON user_account_1.id = category.added_by_id 
-                LEFT OUTER JOIN book 
-                    ON category.id = book.category_id"""
+            detail = True
+            stmt += """,user_account.id AS added_by_user_id, user_account.first_name || ' ' || user_account.last_name AS category_added_by
+                FROM category
+                LEFT OUTER JOIN user_account ON user_account.id = category.added_by_id
+                LEFT OUTER JOIN book ON category.id = book.category_id"""
         else:
-            stmt += "\nFROM category"
-        stmt += f" WHERE category.id = {category_id}"
+            stmt += "\nFROM category \n LEFT OUTER JOIN book ON category.id = book.category_id"
+        stmt += f" \nWHERE category.id = {category_id}"
         category = session.execute(text(stmt)).mappings().all()
         organized_data = {
             "id": None,
             "name": None,
             "added_by_id": None,
-            "category_added_by": None,
             "books": [],
         }
+        if detail:
+            organized_data["category_added_by"] = None
 
         for row in category:
             if organized_data["id"] is None:
                 organized_data["id"] = row.id
                 organized_data["name"] = row.name
                 organized_data["added_by_id"] = row.added_by_id
-                organized_data["category_added_by"] = row.category_added_by
+                if detail:
+                    organized_data["category_added_by"] = row.category_added_by
 
             if row.book_id is not None:
                 organized_data["books"].append(
@@ -102,7 +102,6 @@ class Category(Resource):
 @book_namespace.route("/books")
 class Books(Resource):
     def get(self):
-        stmt = select(md.Book, md.Category.name).join(md.Category)
         stmt = """SELECT book.id, book.title, book.author, book.isbn, book.category_id, book.original_quantity, book.current_quantity, book.date_added, book.added_by_id, book.is_available, book.location, category.name as book_category
         FROM book JOIN category ON category.id = book.category_id
         """
@@ -159,67 +158,74 @@ class Books(Resource):
 class Book(Resource):
     @jwt_required(optional=True)
     def get(self, book_id):
-        schema = pmd.BookDetailSchema
-        # Base query to select a book by its ID and join with its category
-        stmt = (
-            # Select all columns from the Book table
-            select(md.Book)
-            # Join with the Category table using the book_category relationship
-            .join(md.Book.book_category)
-            # Filter the query to only include the book with the specified book_id
-            .where(md.Book.id == book_id)
-            # Use joinedload to eagerly load the book_category relationship
-            # and restrict the loaded fields to only id and name from the Category table
-            .options(joinedload(md.Book.book_category).load_only(md.Category.id, md.Category.name))
-        )
-
+        detail = False
+        stmt = "SELECT book.id, book.title, book.author, book.isbn, book.category_id, book.current_quantity, book.is_available, book.location, book.date_added, category.name AS category_name"
         if request.args.get("detail") == "true" and current_user and current_user.role == "admin":
-            stmt = (
-                stmt
-                # Join with the UserAccount table to get details about the user who added the book
-                .join(md.Book.book_added_by)
-                # Perform an outer join with the Borrow table to include borrow details (if any)
-                # Outer join ensures that books without borrow records are still included
-                .outerjoin(md.Book.borrows).options(
-                    # Use joinedload to eagerly load the book_added_by relationship
-                    # and restrict the loaded fields to only first_name and last_name from the UserAccount table
-                    joinedload(md.Book.book_added_by).load_only(
-                        md.UserAccount.first_name, md.UserAccount.last_name
-                    ),
-                    # Use joinedload to eagerly load the borrows relationship
-                    # and restrict the loaded fields to only id, borrowed_by_id, borrow_date, and is_returned from the Borrow table
-                    joinedload(md.Book.borrows).load_only(
-                        md.Borrow.id,
-                        md.Borrow.borrowed_by_id,
-                        md.Borrow.borrow_date,
-                        md.Borrow.is_returned,
-                    ),
-                    # Use joinedload to eagerly load the borrowed_by relationship within the borrows relationship
-                    # and restrict the loaded fields to only first_name and last_name from the UserAccount table
-                    joinedload(md.Book.borrows)
-                    .joinedload(md.Borrow.borrowed_by)
-                    .load_only(md.UserAccount.first_name, md.UserAccount.last_name),
-                )
-            )
-            schema = pmd.MoreBookDetailSchema
+            detail = True
+            stmt += ",     book.original_quantity, book.added_by_id, added_by.first_name AS added_by_first_name, added_by.last_name AS added_by_last_name, borrow.borrow_date, borrow.due_date, borrow.is_returned, borrowed_by.first_name AS borrowed_by_first_name, borrowed_by.last_name AS borrowed_by_last_name"
+            stmt += "\nFROM book \n JOIN category ON category.id = book.category_id \n JOIN user_account AS added_by ON added_by.id = book.added_by_id \n LEFT OUTER JOIN borrow ON book.id = borrow.book_id \n LEFT OUTER JOIN user_account AS borrowed_by ON borrowed_by.id = borrow.borrowed_by_id"
+        else:
+            stmt += "\nFROM book \n JOIN category ON category.id = book.category_id"
+        stmt += f"\nWHERE book.id = {book_id}"
 
-        book = session.scalars(stmt).first()
-        book = schema.model_validate(book)
-        return jsonify({"book": book.model_dump(), "queries": [sql_compile(stmt)]})
+        book = session.execute(text(stmt)).mappings().all()
+        data = {
+            "id": None,
+            "author": None,
+            "title": None,
+            "book_category": None,
+            "current_quantity": None,
+            "is_available": None,
+            "isbn": None,
+            "location": None,
+        }
+        if detail:
+            data["borrows"] = []
+
+        for row in book:
+            if data["id"] is None:
+                data["id"] = row.id
+                data["author"] = row.author
+                data["title"] = row.title
+                data["book_category"] = row.category_name
+                data["current_quantity"] = row.current_quantity
+                data["is_available"] = row.is_available == 1
+                data["isbn"] = row.isbn
+                data["location"] = row.location
+                if detail:
+                    data["book_added_by"] = row.added_by_first_name + " " + row.added_by_last_name
+                    data["date_added"] = datetime.fromisoformat(row.date_added)
+                    data["original_quantity"] = row.original_quantity
+                    # data["category_id"] = row.category_id
+                else:
+                    break
+
+            data["borrows"].append(
+                {
+                    "id": row.id,
+                    "borrowed_by": row.borrowed_by_first_name + " " + row.borrowed_by_last_name,
+                    "borrowed_book": row.title,
+                    "borrow_date": datetime.fromisoformat(row.borrow_date),
+                    "due_date": datetime.fromisoformat(row.due_date),
+                    "is_returned": row.is_returned == 1,
+                }
+            )
+
+        return jsonify({"book": data, "queries": [sql_compile(stmt)]})
 
     @book_namespace.expect(update_book_input)
     @admin_required
     @atomic_transaction
     def put(self, book_id):
         # Get the fields to update from the request
-        update_data = {}
+        update_data = []
         field_names = list(update_book_input.keys())
         for name in field_names:
             if name in request.json:
                 if name == "quantity":
-                    update_data["current_quantity"] = request.json[name]
+                    update_data.append(f"current_quantity={request.json[name]}")
                 else:
-                    update_data[name] = request.json[name]
+                    update_data.append(f"{name}='{request.json[name]}'")
 
         # If no fields to update, return an error
         if not update_data:
@@ -228,9 +234,9 @@ class Book(Resource):
             )
 
         # Build the update statement dynamically
-        update_stmt = update(md.Book).where(md.Book.id == book_id).values(**update_data)
+        update_stmt = f"UPDATE book SET {', '.join(update_data)} WHERE id={book_id}"
         queries = [sql_compile(update_stmt)]
-        result = session.execute(update_stmt)
+        result = session.execute(text(update_stmt))
         if result.rowcount == 0:
             return make_response(jsonify(error="Book not found"), 404)
         return make_response(
@@ -240,33 +246,29 @@ class Book(Resource):
     @admin_required
     @atomic_transaction
     def delete(self, book_id):
-        book_exists_stmt = select(md.Book.id).where(md.Book.id == book_id)
-        queries = [sql_compile(book_exists_stmt)]
-        book_exists = session.scalars(book_exists_stmt).first()
+        stmt = f"SELECT id FROM book WHERE id = {book_id}"
+        queries = [stmt]
+        book_exists = session.execute(text(stmt)).mappings().first()
         if not book_exists:
             return make_response(
                 jsonify(error="Book not found", queries=queries), HTTPStatus.NOT_FOUND
             )
 
-        borrow_exists_stmt = (
-            select(md.Borrow.id)
-            .where(md.Borrow.book_id == book_id, md.Borrow.is_returned.is_(False))
-            .exists()
-        )
-        queries.append("SELECT " + sql_compile(borrow_exists_stmt))
-        borrow_exists = session.scalar(select(borrow_exists_stmt))
-        if borrow_exists:
+        stmt = f"SELECT EXISTS (SELECT 1 FROM borrow WHERE borrow.book_id = {book_id}) AS borrow_exists"
+        queries.append(sql_compile(stmt))
+        borrow_exists = book_exists = session.execute(text(stmt)).mappings().first()
+        if borrow_exists["borrow_exists"]:
             return make_response(
                 jsonify(
-                    error="Book is borrowed and not returned yet, cannot delete",
+                    error="Book has an existing borrow record, and cannot be deleted",
                     queries=queries,
                 ),
                 HTTPStatus.BAD_REQUEST,
             )
 
-        delete_stmt = delete(md.Book).where(md.Book.id == book_id)
-        queries.append(sql_compile(delete_stmt))
-        session.execute(delete_stmt)
+        stmt = f"DELETE FROM book WHERE book.id = {book_id}"
+        queries.append(stmt)
+        session.execute(text(stmt))
         return make_response(
             jsonify(message="Book deleted successfully", queries=queries), HTTPStatus.OK
         )

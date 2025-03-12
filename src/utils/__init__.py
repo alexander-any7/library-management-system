@@ -33,7 +33,8 @@ session = scoped_session(sessionmaker(bind=engine))
 
 def sql_compile(clause: DQLDMLClauseElement, dialect=dialect) -> str:
     if isinstance(clause, str):
-        return clause
+        clauses = clause.split("\n")
+        return "\n".join([line.strip() for line in clauses if line.strip()])
     return str(clause.compile(dialect=dialect(), compile_kwargs={"literal_binds": True}))
 
 
