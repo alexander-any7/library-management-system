@@ -8,8 +8,9 @@ from flask_jwt_extended import (
     jwt_required,
 )
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import and_, insert, or_, select, update
+from sqlalchemy import and_, insert, or_, select, text, update
 from sqlalchemy.orm import joinedload
+
 from src import models as md
 from src import p_models as pmd
 from src.auth.oauth import admin_required
@@ -76,20 +77,18 @@ class Register(Resource):
                 jsonify(message="Invalid role. Must be one of student or external"),
                 HTTPStatus.BAD_REQUEST,
             )
-        stmt = select(md.UserAccount).where(md.UserAccount.email == email)
-        queries = [sql_compile(stmt)]
-        user = session.execute(stmt).scalars().first()
-        if user:
+        stmt = f"SELECT EXISTS (SELECT 1 FROM user_account WHERE email = '{email}') AS user_exists"
+        queries = [stmt]
+        user = session.execute(text(stmt)).mappings().first()
+        if user["user_exists"]:
             return make_response(
                 jsonify(message="User with email already exists", query=sql_compile(stmt)),
                 HTTPStatus.BAD_REQUEST,
             )
         password = hash_password(password)
-        stmt = insert(md.UserAccount).values(
-            email=email, first_name=first_name, last_name=last_name, password=password, role=role
-        )
-        queries.append(sql_compile(stmt))
-        session.execute(stmt)
+        stmt = f"INSERT INTO user_account (email, first_name, last_name, password, role) VALUES ('{email}', '{first_name}', '{last_name}', '{password}', '{role}')"
+        queries.append(stmt)
+        session.execute(text(stmt))
         return make_response(
             jsonify(message="User created successfully", queries=[queries]), HTTPStatus.CREATED
         )
@@ -101,27 +100,18 @@ class Login(Resource):
     def post(self):
         email = request.json.get("email", None)
         password = request.json.get("password", None)
-
-        stmt = select(
-            md.UserAccount.id,
-            md.UserAccount.email,
-            md.UserAccount.password,
-            md.UserAccount.role,
-            md.UserAccount.is_active,
-        ).where(md.UserAccount.email == email)
-        user = session.execute(stmt).mappings().first()
+        stmt = f"SELECT id, email, password, role, is_active FROM user_account WHERE email = '{email}'"
+        user = session.execute(text(stmt)).mappings().first()
         if not user or not user.is_active or not check_password(password, user.password):
             return make_response(
-                jsonify(message="Wrong username or password", queries=[sql_compile(stmt)]),
+                jsonify(message="Wrong username or password", queries=[stmt]),
                 HTTPStatus.UNAUTHORIZED,
             )
 
         additional_claims = {"role": user.role}
         access_token = create_access_token(identity=user, additional_claims=additional_claims)
         refresh_token = create_refresh_token(identity=user, additional_claims=additional_claims)
-        return jsonify(
-            access_token=access_token, refresh_token=refresh_token, queries=[sql_compile(stmt)]
-        )
+        return jsonify(access_token=access_token, refresh_token=refresh_token, queries=[stmt])
 
 
 @auth_namespace.route("/refresh")
@@ -144,22 +134,19 @@ class MakeAdmin(Resource):
         """Make a user an admin"""
         data = request.json
         email = data.get("email", None)
-        stmt = select(md.UserAccount).where(
-            and_(md.UserAccount.email == email, md.UserAccount.role != "admin")
+        stmt = (
+            f"SELECT id, email, role FROM user_account WHERE email = '{email}' AND role != 'admin'"
         )
-        queries = [sql_compile(stmt)]
-        user = session.execute(stmt).scalars().first()
+        queries = [stmt]
+        user = session.execute(text(stmt)).scalars().first()
         if not user:
             return make_response(
                 jsonify(message="User not found or already an admin", queries=queries),
                 HTTPStatus.NOT_FOUND,
             )
-
-        update_stmt = (
-            update(md.UserAccount).where(md.UserAccount.email == email).values(role="admin")
-        )
-        queries.append(sql_compile(update_stmt))
-        session.execute(update_stmt)
+        stmt = f"UPDATE user_account SET role = 'admin' WHERE email = '{email}'"
+        queries.append(stmt)
+        session.execute(text(stmt))
         return make_response(
             jsonify(message="User is now an admin", queries=queries), HTTPStatus.OK
         )
@@ -169,20 +156,23 @@ class MakeAdmin(Resource):
 class ListUsers(Resource):
     @admin_required
     def get(self):
-        stmt = select(md.UserAccount).order_by(md.UserAccount.first_name)
+        stmt = "SELECT id, email, first_name, last_name, is_active, role FROM user_account \n"
         email = request.args.get("email")
+        ors = []
         if email:
-            stmt = stmt.where(md.UserAccount.email.ilike(f"%{email}%"))
+            ors.append(f"LOWER(email) LIKE LOWER('%{email}%')")
 
         name = request.args.get("name")
         if name:
-            stmt = stmt.where(
-                or_(
-                    md.UserAccount.first_name.ilike(f"%{name}%"),
-                    md.UserAccount.last_name.ilike(f"%{name}%"),
-                )
+            ors.append(
+                f"LOWER(first_name) LIKE LOWER('%{name}%') OR LOWER(last_name) LIKE LOWER('%{name}%')"
             )
-        users = session.execute(stmt).scalars().all()
+
+        if ors:
+            stmt += "\n WHERE " + " OR ".join(ors)
+
+        stmt += "\nORDER BY first_name"
+        users = session.execute(text(stmt)).mappings().all()
         users = [pmd.ListUsersSchema.model_validate(user) for user in users]
         return {"users": [user.model_dump() for user in users], "queries": [sql_compile(stmt)]}
 
