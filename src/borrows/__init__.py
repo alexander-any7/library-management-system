@@ -5,7 +5,7 @@ from uuid import uuid4
 from flask import jsonify, make_response, request
 from flask_jwt_extended import current_user, jwt_required
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import and_, func, insert, select, update
+from sqlalchemy import and_, func, select, text, update
 
 import src.models as md
 import src.p_models as pmd
@@ -58,10 +58,10 @@ class BorrowBook(Resource):
         data = request.json
         book_id = data["book_id"]
         borrower_id = data["borrower_id"]
-        stmt = select(func.count()).where(md.Borrow.borrowed_by_id == borrower_id)
-        queries = [sql_compile(stmt)]
-        borrow_count = session.scalar(stmt)
-        if borrow_count >= 5:
+        stmt = f"SELECT COUNT(*) AS borrow_count FROM borrow WHERE borrowed_by_id = {borrower_id}"
+        queries = [stmt]
+        borrow_count = session.execute(text(stmt)).mappings().first()
+        if borrow_count["borrow_count"] >= 5:
             return make_response(
                 jsonify(
                     error="Borrower has reached the maximum limit of 5 borrowed books",
@@ -71,8 +71,9 @@ class BorrowBook(Resource):
             )
 
         stmt = select(md.Book.id, md.Book.current_quantity).where(md.Book.id == book_id)
-        queries.append(sql_compile(stmt))
-        book = session.execute(stmt).mappings().first()
+        stmt = f"SELECT id, current_quantity FROM book WHERE id = {book_id}"
+        queries.append(stmt)
+        book = session.execute(text(stmt)).mappings().first()
         if not book:
             return make_response(
                 jsonify(error="Book not found", queries=queries), HTTPStatus.NOT_FOUND
@@ -85,22 +86,12 @@ class BorrowBook(Resource):
             )
 
         due_date = calculate_due_date()
-        stmt = insert(md.Borrow).values(
-            book_id=book_id,
-            borrowed_by_id=borrower_id,
-            given_by_id=current_user.id,
-            borrow_date=datetime.now(),
-            due_date=due_date,
-        )
-        queries.append(sql_compile(stmt))
-        session.execute(stmt)
-        stmt = (
-            update(md.Book)
-            .where(md.Book.id == book_id)
-            .values(current_quantity=md.Book.current_quantity - 1)
-        )
-        queries.append(sql_compile(stmt))
-        session.execute(stmt)
+        stmt = f"INSERT INTO borrow (book_id, borrowed_by_id, given_by_id, borrow_date, due_date) VALUES ({book_id}, {borrower_id}, {current_user.id}, CURRENT_TIMESTAMP, '{due_date}')"
+        queries.append(stmt)
+        session.execute(text(stmt))
+        stmt = f"UPDATE book SET current_quantity = current_quantity - 1 WHERE id = {book_id}"
+        queries.append(stmt)
+        session.execute(text(stmt))
         return make_response(
             jsonify(message="Book borrowed successfully", queries=queries), HTTPStatus.CREATED
         )
@@ -114,9 +105,9 @@ class ReturnBook(Resource):
     def post(self):
         data = request.json
         borrow_id = data["borrow_id"]
-        stmt = select(md.Borrow).where(md.Borrow.id == borrow_id)
-        queries = [sql_compile(stmt)]
-        borrow = session.scalars(stmt).first()
+        stmt = f"SELECT * FROM borrow WHERE id = {borrow_id};"
+        queries = [stmt]
+        borrow = session.execute(text(stmt)).mappings().first()
         if not borrow:
             return make_response(
                 jsonify(error="Borrow record not found", queries=queries), HTTPStatus.NOT_FOUND
@@ -126,20 +117,14 @@ class ReturnBook(Resource):
                 jsonify(error="Book already returned", queries=queries), HTTPStatus.BAD_REQUEST
             )
         now = datetime.now()
+        stmt = f"UPDATE borrow SET is_returned = TRUE, return_date = CURRENT_TIMESTAMP, received_by_id = {current_user.id} WHERE id = {borrow_id};"
+        queries.append(stmt)
+        session.execute(text(stmt))
         stmt = (
-            update(md.Borrow)
-            .where(md.Borrow.id == borrow_id)
-            .values(is_returned=True, return_date=now, received_by_id=current_user.id)
+            f"UPDATE book SET current_quantity = current_quantity + 1 WHERE id = {borrow.book_id};"
         )
-        queries.append(sql_compile(stmt))
-        session.execute(stmt)
-        stmt = (
-            update(md.Book)
-            .where(md.Book.id == borrow.book_id)
-            .values(current_quantity=md.Book.current_quantity + 1)
-        )
-        queries.append(sql_compile(stmt))
-        session.execute(stmt)
+        queries.append(stmt)
+        session.execute(text(stmt))
         overdue_query = check_overdue_and_create_fine(borrow, now, commit=False)
         if overdue_query:
             queries.append(overdue_query)
@@ -154,14 +139,52 @@ class ReturnBook(Resource):
 class Borrows(Resource):
     @jwt_required()
     def get(self):
-        stmt = select(md.Borrow).where(md.Borrow.borrowed_by_id == current_user.id)
-        borrows = session.execute(stmt).scalars().all()
-        borrows = [pmd.ListBorrowSchema.model_validate(borrow) for borrow in borrows]
+        stmt = f"""SELECT borrow.id AS borrow_id, borrow.borrowed_by_id, borrow.received_by_id, borrow.given_by_id, borrow.is_returned, borrow.due_date, borrow.borrow_date, user_account.first_name as borrowed_by_first_name, user_account.last_name as borrowed_by_last_name, given_by.first_name as given_by_first_name, given_by.last_name as given_by_last_name, received_by.first_name as received_by_first_name, received_by.last_name as received_by_last_name, book.title as book_title
+            FROM borrow
+            JOIN user_account ON borrow.borrowed_by_id = user_account.id
+            JOIN user_account AS given_by ON borrow.given_by_id = given_by.id
+            JOIN user_account AS received_by ON borrow.received_by_id = received_by.id
+            JOIN book ON borrow.book_id = book.id
+        WHERE borrowed_by_id = {current_user.id}"""
+        queries = [sql_compile(stmt)]
+        borrows = session.execute(text(stmt)).mappings().all()
+        fines = tuple()
+        if borrows:
+            stmt = f"SELECT id, amount, paid, date_created, date_paid FROM fine WHERE borrow_id IN (SELECT id FROM borrow WHERE borrowed_by_id = {current_user.id})"
+            queries.append(stmt)
+            fines = session.execute(text(stmt)).mappings().all()
+
+        data = [
+            {
+                "id": borrow.borrow_id,
+                "borrowed_book": borrow.book_title,
+                "borrow_date": datetime.fromisoformat(borrow.borrow_date),
+                "is_returned": borrow.is_returned == 1,
+                "fines": [
+                    {
+                        "id": fine.id,
+                        "borrow": borrow.book_title,
+                        "amount": fine.amount,
+                        "paid": fine.paid == 1,
+                        "date_created": datetime.fromisoformat(fine.date_created),
+                        "date_paid": (
+                            datetime.fromisoformat(fine.date_paid) if fine.date_paid else None
+                        ),
+                    }
+                    for fine in fines
+                ],
+                "borrowed_by": f"{borrow.borrowed_by_first_name} {borrow.borrowed_by_last_name}",
+                "given_by": f"{borrow.given_by_first_name} {borrow.given_by_last_name}",
+                "due_date": datetime.fromisoformat(borrow.due_date),
+                "received_by": f"{borrow.received_by_first_name} {borrow.received_by_last_name}",
+            }
+            for borrow in borrows
+        ]
         return make_response(
             jsonify(
                 {
-                    "borrows": [borrow.model_dump() for borrow in borrows],
-                    "queries": [sql_compile(stmt)],
+                    "borrows": data,
+                    "queries": queries,
                 }
             )
         )
@@ -171,20 +194,48 @@ class Borrows(Resource):
 class Borrow(Resource):
     @jwt_required()
     def get(self, borrow_id):
-        stmt = select(md.Borrow).where(
-            and_(md.Borrow.id == borrow_id, md.Borrow.borrowed_by_id == current_user.id)
-        )
-        borrow = session.execute(stmt).scalars().first()
+        stmt = f"""SELECT borrow.id AS borrow_id, borrow.borrowed_by_id, borrow.received_by_id, borrow.given_by_id, borrow.is_returned, borrow.due_date, borrow.borrow_date, user_account.first_name as borrowed_by_first_name, user_account.last_name as borrowed_by_last_name, given_by.first_name as given_by_first_name, given_by.last_name as given_by_last_name, received_by.first_name as received_by_first_name, received_by.last_name as received_by_last_name, book.title as book_title
+            FROM borrow
+            JOIN user_account ON borrow.borrowed_by_id = user_account.id
+            JOIN user_account AS given_by ON borrow.given_by_id = given_by.id
+            JOIN user_account AS received_by ON borrow.received_by_id = received_by.id
+            JOIN book ON borrow.book_id = book.id
+        WHERE borrowed_by_id = {current_user.id} AND borrow.id = {borrow_id}"""
+        queries = [sql_compile(stmt)]
+        borrow = session.execute(text(stmt)).mappings().first()
+        fines = tuple()
         if not borrow:
             return make_response(
                 jsonify(error="Borrow record not found", queries=[sql_compile(stmt)]),
                 HTTPStatus.NOT_FOUND,
             )
-
-        borrow = pmd.DetailBorrowSchema.model_validate(borrow)
-        return make_response(
-            jsonify({"borrow": borrow.model_dump(), "queries": [sql_compile(stmt)]})
-        )
+        stmt = f"SELECT id, amount, paid, date_created, date_paid FROM fine WHERE borrow_id IN (SELECT id FROM borrow WHERE borrowed_by_id = {current_user.id})"
+        queries.append(stmt)
+        fines = session.execute(text(stmt)).mappings().all()
+        data = {
+            "id": borrow.borrow_id,
+            "borrowed_book": borrow.book_title,
+            "borrow_date": datetime.fromisoformat(borrow.borrow_date),
+            "is_returned": borrow.is_returned == 1,
+            "fines": [
+                {
+                    "id": fine.id,
+                    "borrow": borrow.book_title,
+                    "amount": fine.amount,
+                    "paid": fine.paid == 1,
+                    "date_created": datetime.fromisoformat(fine.date_created),
+                    "date_paid": (
+                        datetime.fromisoformat(fine.date_paid) if fine.date_paid else None
+                    ),
+                }
+                for fine in fines
+            ],
+            "borrowed_by": f"{borrow.borrowed_by_first_name} {borrow.borrowed_by_last_name}",
+            "given_by": f"{borrow.given_by_first_name} {borrow.given_by_last_name}",
+            "due_date": datetime.fromisoformat(borrow.due_date),
+            "received_by": f"{borrow.received_by_first_name} {borrow.received_by_last_name}",
+        }
+        return make_response(jsonify({"borrow": data, "queries": [sql_compile(stmt)]}))
 
 
 @borrow_namespace.route("/borrows-admin/<int:user_id>")

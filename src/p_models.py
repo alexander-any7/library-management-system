@@ -18,13 +18,8 @@ class ListUsersSchema(BaseModel):
     role: str
 
 
-class UserDetailSchema(BaseModel):
-    id: int
-    email: str
-    first_name: str
-    last_name: str
-    is_active: bool
-    role: str
+class UserDetailSchema(ListUsersSchema):
+    pass
 
 
 class MoreUserDetailSchema(UserDetailSchema):

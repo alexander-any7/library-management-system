@@ -2,14 +2,14 @@ import os
 from datetime import datetime, timedelta
 from functools import wraps
 
-from sqlalchemy import TextClause, create_engine, insert
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.sql.elements import DQLDMLClauseElement
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from config import Config, config_dict
-from src.models import Borrow, Fine
+from src.models import Borrow
 
 PAYMENT_METHODS = ("cash", "debit", "credit", "paypal", "stripe")
 VALID_USER_TYPES = ("student", "external", "admin")
@@ -55,6 +55,8 @@ def calculate_fine(**kwargs):
     date: datetime = kwargs.get("date")
     if date is None:
         return 0
+    if not isinstance(date, datetime):
+        date = datetime.fromisoformat(date)
     days = (datetime.now() - date).days
     return days * 100 if days > 0 else 0
 
@@ -93,18 +95,16 @@ def check_overdue_and_create_fine(borrow: Borrow, now: datetime = None, commit=T
     """
     if now is None:
         now = datetime.now()
+    due_date = borrow.due_date
+    if not isinstance(due_date, datetime):
+        due_date = datetime.fromisoformat(due_date)
 
-    if borrow.due_date.date() < now.date():
+    if due_date.date() < now.date():
         fine = calculate_fine(date=borrow.due_date)
-        stmt = insert(Fine).values(
-            borrow_id=borrow.id,
-            amount=fine,
-            date_created=now,
-        )
-        query = sql_compile(stmt)
-        session.execute(stmt)
+        stmt = f"INSERT INTO fine (borrow_id, amount, date_created) VALUES ({borrow.id}, {fine}, '{now}')"
+        session.execute(text(stmt))
 
         if commit:
             session.commit()
 
-        return query
+        return stmt

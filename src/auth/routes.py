@@ -1,3 +1,4 @@
+from datetime import datetime
 from http import HTTPStatus
 
 from flask import jsonify, make_response, request
@@ -8,10 +9,8 @@ from flask_jwt_extended import (
     jwt_required,
 )
 from flask_restx import Namespace, Resource, fields
-from sqlalchemy import and_, insert, or_, select, text, update
-from sqlalchemy.orm import joinedload
+from sqlalchemy import text
 
-from src import models as md
 from src import p_models as pmd
 from src.auth.oauth import admin_required
 from src.utils import atomic_transaction, check_password, hash_password, session, sql_compile
@@ -182,31 +181,117 @@ class ListUsers(Resource):
 class GetUser(Resource):
     @admin_required
     def get(self, user_id):
-        stmt = select(md.UserAccount).where(md.UserAccount.id == user_id)
-        user = session.execute(stmt).scalars().first()
+        books_received = tuple()
+        books_given = tuple()
+        fines_collected = tuple()
+        borrows = tuple()
+        stmt = f"SELECT id, email, first_name, last_name, is_active, role FROM user_account WHERE id = {user_id}"
+        user = session.execute(text(stmt)).mappings().first()
         if not user:
             return make_response(
                 jsonify(message="User not found", queries=[sql_compile(stmt)]),
                 HTTPStatus.NOT_FOUND,
             )
-        schema = pmd.UserDetailSchema
-        queries = [sql_compile(stmt)]
+        queries = [stmt]
         if request.args.get("detail") == "true":
-            stmt = (
-                stmt.join(md.Borrow, md.Borrow.borrowed_by_id == md.UserAccount.id)
-                .join(md.Fine, md.Fine.borrow_id == md.Borrow.id)  # Join Fine with Borrow
-                .options(
-                    joinedload(md.UserAccount.books_borrowed).joinedload(
-                        md.Borrow.fines
-                    )  # Eager load Borrow and Fines
-                )
-            )
+            stmt = f"""SELECT borrow.id AS borrow_id, borrow.borrow_date, borrow.received_by_id, borrow.is_returned, borrow.book_id, book.title AS borrowed_book, fine.id AS fine_id, fine.amount AS fine_amount, fine.paid AS fine_paid, fine.date_created AS fine_date_created, fine.collected_by_id AS fine_collected_by_id, fine.date_paid AS fine_date_paid
+                      FROM borrow
+                      JOIN book ON book.id = borrow.book_id
+                      LEFT JOIN fine ON fine.borrow_id = borrow.id
+                      WHERE borrow.borrowed_by_id = {user_id};
+            """
             queries.append(sql_compile(stmt))
-            user = session.scalars(stmt).first()
-            schema = pmd.MoreUserDetailSchema
+            borrows = session.execute(text(stmt)).mappings().all()
+            if user.role == "admin":
+                stmt = f"""SELECT borrow.id AS borrow_id, borrow.borrow_date, borrow.borrowed_by_id, borrow.is_returned, borrow.book_id, borrow.return_date, book.title AS borrowed_book
+                          FROM borrow
+                          JOIN book ON book.id = borrow.book_id
+                          WHERE borrow.received_by_id = {user_id};
+                    """
+                queries.append(sql_compile(stmt))
+                books_received = session.execute(text(stmt)).mappings().all()
 
-        user = schema.model_validate(user)
-        return make_response(jsonify(user=user.model_dump(), queries=queries))
+                stmt = f"""
+                        SELECT fine.id AS fine_id, fine.borrow_id, fine.amount AS fine_amount, fine.paid AS fine_paid, fine.date_created AS fine_date_created, fine.collected_by_id, fine.date_paid AS fine_date_paid, borrow.borrow_date, borrow.borrowed_by_id, borrow.received_by_id, borrow.is_returned, borrow.book_id, book.title AS borrowed_book
+                        FROM fine
+                        JOIN borrow ON borrow.id = fine.borrow_id
+                        JOIN book ON book.id = borrow.book_id
+                        WHERE fine.collected_by_id = {user_id};
+                    """
+                fines_collected = session.execute(text(stmt)).mappings().all()
+
+                stmt = f"""SELECT borrow.id AS borrow_id, borrow.borrow_date, borrow.borrowed_by_id, borrow.is_returned, borrow.book_id, book.title AS borrowed_book
+                          FROM borrow
+                          JOIN book ON book.id = borrow.book_id
+                          WHERE borrow.given_by_id = {user_id};"""
+                queries.append(sql_compile(stmt))
+                books_given = session.execute(text(stmt)).mappings().all()
+
+        user = {
+            "email": user.email,
+            "first_name": user.first_name,
+            "id": user.id,
+            "is_active": user.is_active == 1,
+            "last_name": user.last_name,
+            "role": user.role,
+            "books_borrowed": [
+                {
+                    "borrow_date": datetime.fromisoformat(borrow.borrow_date),
+                    "borrowed_book": borrow.borrowed_book,
+                    "id": borrow.borrow_id,
+                    "is_returned": borrow.is_returned == 1,
+                    "fines": [
+                        {
+                            "id": borrow.fine_id,
+                            "amount": borrow.fine_amount,
+                            "borrow": borrow.borrowed_book,
+                            "date_created": datetime.fromisoformat(borrow.fine_date_created),
+                            "date_paid": datetime.fromisoformat(borrow.fine_date_paid),
+                            "paid": borrow.fine_paid == 1,
+                        }
+                    ],
+                }
+                for borrow in borrows
+            ],
+            "books_given": (
+                [
+                    {
+                        "id": borrow.borrow_id,
+                        "borrow_date": datetime.fromisoformat(borrow.borrow_date),
+                        "borrowed_book": borrow.borrowed_book,
+                        "is_returned": borrow.is_returned == 1,
+                    }
+                    for borrow in books_given
+                ]
+            ),
+            "fines_collected": (
+                [
+                    {
+                        "id": fine.fine_id,
+                        "amount": fine.fine_amount,
+                        "date_created": datetime.fromisoformat(fine.fine_date_created),
+                        "date_paid": datetime.fromisoformat(fine.fine_date_paid),
+                        "borrow_id": fine.borrow_id,
+                        "paid": fine.fine_paid == 1,
+                        "borrowed_book": fine.borrowed_book,
+                    }
+                    for fine in fines_collected
+                ]
+            ),
+            "books_received": (
+                [
+                    {
+                        "id": borrow.borrow_id,
+                        "borrow_date": datetime.fromisoformat(borrow.borrow_date),
+                        "borrowed_book": borrow.borrowed_book,
+                        "is_returned": borrow.is_returned == 1,
+                        "return_date": datetime.fromisoformat(borrow.return_date),
+                    }
+                    for borrow in books_received
+                ]
+            ),
+        }
+        return make_response(jsonify(user=user, queries=queries))
 
     @auth_namespace.expect(update_user_input)
     @admin_required
@@ -220,16 +305,14 @@ class GetUser(Resource):
                 jsonify(message=f"Invalid role. Must be one of {valid_roles}", queries=[]),
                 HTTPStatus.BAD_REQUEST,
             )
-        update_data = {}
+        update_data = []
         for name in tuple(update_user_input.keys()):
             if name in data:
-                update_data[name] = data[name]
+                update_data.append(f"{name}='{request.json[name]}'")
 
-        update_stmt = (
-            update(md.UserAccount).where(md.UserAccount.id == user_id).values(update_data)
-        )
-        queries = [sql_compile(update_stmt)]
-        result = session.execute(update_stmt)
+        update_stmt = f"UPDATE user_account SET {', '.join(update_data)} WHERE id={user_id}"
+        queries = [update_stmt]
+        result = session.execute(text(update_stmt))
         if result.rowcount == 0:
             return make_response(
                 jsonify(message="User not found", queries=queries), HTTPStatus.NOT_FOUND
@@ -246,13 +329,9 @@ class DeactivateUser(Resource):
     def post(self):
         data = request.json
         email = data.get("email", None)
-        stmt = (
-            update(md.UserAccount)
-            .where(and_(md.UserAccount.email == email, md.UserAccount.is_active.is_(True)))
-            .values(is_active=False)
-        )
-        queries = [sql_compile(stmt)]
-        result = session.execute(stmt)
+        stmt = f"UPDATE user_account SET is_active = FALSE WHERE email = '{email}' AND is_active = TRUE"
+        queries = [stmt]
+        result = session.execute(text(stmt))
         if result.rowcount == 0:
             return make_response(
                 jsonify(message="User not found or already deactivated", queries=queries),
@@ -270,18 +349,14 @@ class ActivateUser(Resource):
     def post(self):
         data = request.json
         email = data.get("email", None)
-        stmt = (
-            update(md.UserAccount)
-            .where(and_(md.UserAccount.email == email, md.UserAccount.is_active.is_(False)))
-            .values(is_active=True)
-        )
-        queries = [sql_compile(stmt)]
-        result = session.execute(stmt)
+        stmt = f"UPDATE user_account SET is_active = TRUE WHERE email = '{email}' AND is_active = FALSE"
+        queries = [stmt]
+        result = session.execute(text(stmt))
         if result.rowcount == 0:
             return make_response(
-                jsonify(message="User not found or already deactivated", queries=queries),
+                jsonify(message="User not found or already active", queries=queries),
                 HTTPStatus.NOT_FOUND,
             )
         return make_response(
-            jsonify(message="User deactivated successfully", queries=queries), HTTPStatus.OK
+            jsonify(message="User activated successfully", queries=queries), HTTPStatus.OK
         )
