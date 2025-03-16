@@ -61,6 +61,22 @@ CREATE TABLE IF NOT EXISTS "fine" (
 	FOREIGN KEY(borrow_id) REFERENCES borrow (id), 
 	FOREIGN KEY(collected_by_id) REFERENCES user_account (id)
 );
+
+CREATE INDEX idx_book_category_id ON book (category_id);
+CREATE INDEX idx_book_added_by_id ON book (added_by_id);
+CREATE INDEX idx_book_isbn ON book (isbn);
+
+CREATE INDEX idx_borrow_book_id ON borrow (book_id);
+CREATE INDEX idx_borrow_borrowed_by_id ON borrow (borrowed_by_id);
+CREATE INDEX idx_borrow_given_by_id ON borrow (given_by_id);
+CREATE INDEX idx_borrow_received_by_id ON borrow (received_by_id);
+
+CREATE INDEX idx_fine_borrow_id ON fine (borrow_id);
+CREATE INDEX idx_fine_collected_by_id ON fine (collected_by_id);
+
+CREATE INDEX idx_category_added_by_id ON category (added_by_id);
+
+CREATE INDEX idx_user_account_email ON user_account (email);
 """
 
 
