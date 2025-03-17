@@ -127,7 +127,7 @@ class ReturnBook(Resource):
         session.execute(text(stmt))
         overdue_query = check_overdue_and_create_fine(borrow, now, commit=False)
         if overdue_query:
-            queries.append(overdue_query)
+            queries.extend(list(overdue_query))
 
         session.commit()
         return make_response(

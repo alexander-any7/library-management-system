@@ -209,6 +209,14 @@ class AllTestCase(unittest.TestCase):
         self.assertTrue(fine)
         self.assertTrue(fine.amount > 0)
 
+        notification = (
+            session.query(md.Notification)
+            .where(md.Notification.user_id == borrow.borrowed_by_id)
+            .first()
+        )
+        self.assertTrue(notification)
+        self.assertFalse(notification.is_read)
+
     def test_fines_report(self):
         student_2 = md.UserAccount(
             email=fake.email(),

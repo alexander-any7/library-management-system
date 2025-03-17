@@ -101,10 +101,14 @@ def check_overdue_and_create_fine(borrow: Borrow, now: datetime = None, commit=T
 
     if due_date.date() < now.date():
         fine = calculate_fine(date=borrow.due_date)
-        stmt = f"INSERT INTO fine (borrow_id, amount, date_created) VALUES ({borrow.id}, {fine}, '{now}')"
-        session.execute(text(stmt))
+        fine_stmt = f"INSERT INTO fine (borrow_id, amount, date_created) VALUES ({borrow.id}, {fine}, '{now}')"
+        session.execute(text(fine_stmt))
+
+        overdue_stmt = f"INSERT INTO notification (user_id, message, sent_date, is_read) VALUES ({borrow.borrowed_by_id}, 'You have overdue fines', '{datetime.now()}', 0)"
+        session.execute(text(overdue_stmt))
+        session.commit()
 
         if commit:
             session.commit()
 
-        return stmt
+        return (fine_stmt, overdue_stmt)

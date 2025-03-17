@@ -194,3 +194,11 @@ class AdminFineListSchema(BaseModel):
     @field_validator("borrow", mode="before")
     def display_borrow(cls, value):
         return AdminListBorrowSchema.model_validate(value)
+
+
+class NotificationListSchema(BaseModel):
+    id: int
+    user_id: int
+    message: str
+    date_sent: datetime
+    is_read: bool = False

@@ -142,3 +142,20 @@ class Fine(Base):
 
     borrow: Mapped[Borrow] = relationship(back_populates="fines")
     collected_by: Mapped[UserAccount] = relationship(back_populates="fines_collected")
+
+
+class Notification(Base):
+    __tablename__ = "notification"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id = mapped_column(ForeignKey("user_account.id"))
+    message: Mapped[str] = mapped_column(String, nullable=False)
+    sent_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    is_read: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="0"
+    )
+
+    user: Mapped[UserAccount] = relationship("UserAccount")
+
+    def __repr__(self):
+        return self.message
