@@ -129,6 +129,8 @@ class Books(Resource):
         if or_list:
             stmt = stmt + " WHERE " + " OR ".join(or_list)
 
+        stmt += " ORDER BY book.title ASC"
+
         books = session.execute(text(stmt)).mappings().all()
         books = [pmd.ListBookSchema.model_validate(book) for book in books]
         return make_response(
