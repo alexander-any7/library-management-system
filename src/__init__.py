@@ -10,6 +10,7 @@ from src.auth.routes import auth_namespace
 from src.books import book_namespace
 from src.borrows import borrow_namespace
 from src.reports import reports_namespace
+from src.notifications import notifications_namespace
 from src.utils import session
 from flask_cors import CORS
 
@@ -58,5 +59,6 @@ def create_app(db="sqlite", config=config_dict['dev']):
     api.add_namespace(auth_namespace, path="")
     api.add_namespace(borrow_namespace, path="")
     api.add_namespace(reports_namespace, path="")
+    api.add_namespace(notifications_namespace, path="")
 
     return app

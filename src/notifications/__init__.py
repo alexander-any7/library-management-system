@@ -7,10 +7,10 @@ import src.models as md
 import src.p_models as pmd
 from src.utils import atomic_transaction, session, sql_compile
 
-notifications = Namespace("Notifications", description="Notification operations", path="/")
+notifications_namespace = Namespace("Notifications", description="Notification operations", path="/")
 
 
-@notifications.route("/notifications")
+@notifications_namespace.route("/notifications")
 class Notifications(Resource):
     @jwt_required
     def get(self):
@@ -34,7 +34,7 @@ class Notifications(Resource):
         )
 
 
-@notifications.route("/notifications/<int:notification_id>")
+@notifications_namespace.route("/notifications/<int:notification_id>")
 class NotificationDetail(Resource):
     @jwt_required
     @atomic_transaction
